@@ -1,6 +1,4 @@
 import { Badge, Portal } from '@invoke-ai/ui-library';
-import { useStore } from '@nanostores/react';
-import { $isLeftPanelOpen } from 'features/ui/store/uiSlice';
 import type { RefObject } from 'react';
 import { memo, useEffect, useState } from 'react';
 import { useGetQueueStatusQuery } from 'services/api/endpoints/queue';
@@ -11,7 +9,6 @@ type Props = {
 
 export const QueueCountBadge = memo(({ targetRef }: Props) => {
   const [badgePos, setBadgePos] = useState<{ x: string; y: string } | null>(null);
-  const isParametersPanelOpen = useStore($isLeftPanelOpen);
   const { queueSize } = useGetQueueStatusQuery(undefined, {
     selectFromResult: (res) => ({
       queueSize: res.data ? res.data.queue.pending + res.data.queue.in_progress : 0,
@@ -31,11 +28,24 @@ export const QueueCountBadge = memo(({ targetRef }: Props) => {
     }
 
     const cb = () => {
-      if (!$isLeftPanelOpen.get()) {
+      // If the parent element is not visible, we do not want to show the badge. This can be tricky to reliably
+      // determine. The best way I've found is to check the bounding rect of the target and its parent.
+      const badgeElRect = target.getBoundingClientRect();
+      const parentElRect = parent.getBoundingClientRect();
+      if (
+        badgeElRect.x === 0 ||
+        badgeElRect.y === 0 ||
+        badgeElRect.width === 0 ||
+        badgeElRect.height === 0 ||
+        parentElRect.x === 0 ||
+        parentElRect.y === 0 ||
+        parentElRect.width === 0 ||
+        parentElRect.height === 0
+      ) {
+        setBadgePos(null);
         return;
       }
-      const { x, y } = target.getBoundingClientRect();
-      setBadgePos({ x: `${x - 7}px`, y: `${y - 5}px` });
+      setBadgePos({ x: `${badgeElRect.x - 7}px`, y: `${badgeElRect.y - 5}px` });
     };
 
     const resizeObserver = new ResizeObserver(cb);
@@ -51,9 +61,6 @@ export const QueueCountBadge = memo(({ targetRef }: Props) => {
     return null;
   }
   if (!badgePos) {
-    return null;
-  }
-  if (!isParametersPanelOpen) {
     return null;
   }
 

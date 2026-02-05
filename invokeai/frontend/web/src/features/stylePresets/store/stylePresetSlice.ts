@@ -1,22 +1,33 @@
 import type { PayloadAction, Selector } from '@reduxjs/toolkit';
 import { createSelector, createSlice } from '@reduxjs/toolkit';
-import type { PersistConfig, RootState } from 'app/store/store';
-import { deepClone } from 'common/util/deepClone';
-import { newSessionRequested } from 'features/controlLayers/store/actions';
+import type { RootState } from 'app/store/store';
+import type { SliceConfig } from 'app/store/types';
+import { isPlainObject } from 'es-toolkit';
+import { paramsReset } from 'features/controlLayers/store/paramsSlice';
 import { atom } from 'nanostores';
 import { stylePresetsApi } from 'services/api/endpoints/stylePresets';
+import { assert } from 'tsafe';
+import z from 'zod';
 
-import type { StylePresetState } from './types';
+const zStylePresetState = z.object({
+  activeStylePresetId: z.string().nullable(),
+  searchTerm: z.string(),
+  viewMode: z.boolean(),
+  showPromptPreviews: z.boolean(),
+});
 
-const initialState: StylePresetState = {
+type StylePresetState = z.infer<typeof zStylePresetState>;
+
+const getInitialState = (): StylePresetState => ({
   activeStylePresetId: null,
   searchTerm: '',
   viewMode: false,
-};
+  showPromptPreviews: false,
+});
 
-export const stylePresetSlice = createSlice({
+const slice = createSlice({
   name: 'stylePreset',
-  initialState: initialState,
+  initialState: getInitialState(),
   reducers: {
     activeStylePresetIdChanged: (state, action: PayloadAction<string | null>) => {
       state.activeStylePresetId = action.payload;
@@ -27,8 +38,14 @@ export const stylePresetSlice = createSlice({
     viewModeChanged: (state, action: PayloadAction<boolean>) => {
       state.viewMode = action.payload;
     },
+    showPromptPreviewsChanged: (state, action: PayloadAction<boolean>) => {
+      state.showPromptPreviews = action.payload;
+    },
   },
   extraReducers(builder) {
+    builder.addCase(paramsReset, () => {
+      return getInitialState();
+    });
     builder.addMatcher(stylePresetsApi.endpoints.deleteStylePreset.matchFulfilled, (state, action) => {
       if (state.activeStylePresetId === null) {
         return;
@@ -47,27 +64,25 @@ export const stylePresetSlice = createSlice({
         state.activeStylePresetId = null;
       }
     });
-    builder.addMatcher(newSessionRequested, () => {
-      return deepClone(initialState);
-    });
   },
 });
 
-export const { activeStylePresetIdChanged, searchTermChanged, viewModeChanged } = stylePresetSlice.actions;
+export const { activeStylePresetIdChanged, searchTermChanged, viewModeChanged, showPromptPreviewsChanged } =
+  slice.actions;
 
-/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-const migrateStylePresetState = (state: any): any => {
-  if (!('_version' in state)) {
-    state._version = 1;
-  }
-  return state;
-};
-
-export const stylePresetPersistConfig: PersistConfig<StylePresetState> = {
-  name: stylePresetSlice.name,
-  initialState,
-  migrate: migrateStylePresetState,
-  persistDenylist: [],
+export const stylePresetSliceConfig: SliceConfig<typeof slice> = {
+  slice,
+  schema: zStylePresetState,
+  getInitialState,
+  persistConfig: {
+    migrate: (state) => {
+      assert(isPlainObject(state));
+      if (!('_version' in state)) {
+        state._version = 1;
+      }
+      return zStylePresetState.parse(state);
+    },
+  },
 };
 
 export const selectStylePresetSlice = (state: RootState) => state.stylePreset;
@@ -79,6 +94,7 @@ export const selectStylePresetActivePresetId = createStylePresetSelector(
 );
 export const selectStylePresetViewMode = createStylePresetSelector((stylePreset) => stylePreset.viewMode);
 export const selectStylePresetSearchTerm = createStylePresetSelector((stylePreset) => stylePreset.searchTerm);
+export const selectShowPromptPreviews = createStylePresetSelector((stylePreset) => stylePreset.showPromptPreviews);
 
 /**
  * Tracks whether or not the style preset menu is open.

@@ -1,8 +1,6 @@
 import { Button, Text, useToast } from '@invoke-ai/ui-library';
-import { useAppDispatch } from 'app/store/storeHooks';
-import { $installModelsTab } from 'features/modelManagerV2/subpanels/InstallModels';
-import { useFeatureStatus } from 'features/system/hooks/useFeatureStatus';
-import { setActiveTab } from 'features/ui/store/uiSlice';
+import { setInstallModelsTabByName } from 'features/modelManagerV2/store/installModelsStore';
+import { navigationApi } from 'features/ui/layouts/navigation-api';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMainModels } from 'services/api/hooks/modelsByType';
@@ -11,7 +9,6 @@ const TOAST_ID = 'starterModels';
 
 export const useStarterModelsToast = () => {
   const { t } = useTranslation();
-  const isEnabled = useFeatureStatus('starterModels');
   const [didToast, setDidToast] = useState(false);
   const [mainModels, { data }] = useMainModels();
   const toast = useToast();
@@ -24,7 +21,7 @@ export const useStarterModelsToast = () => {
         toast.close(TOAST_ID);
       }
     }
-    if (data && mainModels.length === 0 && !didToast && isEnabled) {
+    if (data && mainModels.length === 0 && !didToast) {
       toast({
         id: TOAST_ID,
         title: t('modelManager.noModelsInstalled'),
@@ -35,19 +32,18 @@ export const useStarterModelsToast = () => {
         onCloseComplete: () => setDidToast(true),
       });
     }
-  }, [data, didToast, isEnabled, mainModels.length, t, toast]);
+  }, [data, didToast, mainModels.length, t, toast]);
 };
 
 const ToastDescription = () => {
   const { t } = useTranslation();
-  const dispatch = useAppDispatch();
   const toast = useToast();
 
   const onClick = useCallback(() => {
-    dispatch(setActiveTab('models'));
-    $installModelsTab.set(3);
+    navigationApi.switchToTab('models');
+    setInstallModelsTabByName('launchpad');
     toast.close(TOAST_ID);
-  }, [dispatch, toast]);
+  }, [toast]);
 
   return (
     <Text fontSize="md">

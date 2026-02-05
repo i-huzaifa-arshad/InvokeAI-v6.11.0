@@ -4,12 +4,11 @@ import { useImageUploadButton } from 'common/hooks/useImageUploadButton';
 import { useEntityIdentifierContext } from 'features/controlLayers/contexts/EntityIdentifierContext';
 import { usePullBboxIntoRegionalGuidanceReferenceImage } from 'features/controlLayers/hooks/saveCanvasHooks';
 import { useCanvasIsBusy } from 'features/controlLayers/hooks/useCanvasIsBusy';
-import { rgIPAdapterDeleted } from 'features/controlLayers/store/canvasSlice';
+import { rgRefImageDeleted } from 'features/controlLayers/store/canvasSlice';
 import type { SetRegionalGuidanceReferenceImageDndTargetData } from 'features/dnd/dnd';
 import { setRegionalGuidanceReferenceImageDndTarget } from 'features/dnd/dnd';
 import { DndDropTarget } from 'features/dnd/DndDropTarget';
 import { setRegionalGuidanceReferenceImage } from 'features/imageActions/actions';
-import { activeTabCanvasRightPanelChanged } from 'features/ui/store/uiSlice';
 import { memo, useCallback, useMemo } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { PiXBold } from 'react-icons/pi';
@@ -31,11 +30,8 @@ export const RegionalGuidanceIPAdapterSettingsEmptyState = memo(({ referenceImag
     [dispatch, entityIdentifier, referenceImageId]
   );
   const uploadApi = useImageUploadButton({ onUpload, allowMultiple: false });
-  const onClickGalleryButton = useCallback(() => {
-    dispatch(activeTabCanvasRightPanelChanged('gallery'));
-  }, [dispatch]);
   const onDeleteIPAdapter = useCallback(() => {
-    dispatch(rgIPAdapterDeleted({ entityIdentifier, referenceImageId }));
+    dispatch(rgRefImageDeleted({ entityIdentifier, referenceImageId }));
   }, [dispatch, entityIdentifier, referenceImageId]);
   const pullBboxIntoIPAdapter = usePullBboxIntoRegionalGuidanceReferenceImage(entityIdentifier, referenceImageId);
 
@@ -53,14 +49,11 @@ export const RegionalGuidanceIPAdapterSettingsEmptyState = memo(({ referenceImag
       UploadButton: (
         <Button isDisabled={isBusy} size="sm" variant="link" color="base.300" {...uploadApi.getUploadButtonProps()} />
       ),
-      GalleryButton: (
-        <Button onClick={onClickGalleryButton} isDisabled={isBusy} size="sm" variant="link" color="base.300" />
-      ),
       PullBboxButton: (
         <Button onClick={pullBboxIntoIPAdapter} isDisabled={isBusy} size="sm" variant="link" color="base.300" />
       ),
     }),
-    [isBusy, onClickGalleryButton, pullBboxIntoIPAdapter, uploadApi]
+    [isBusy, pullBboxIntoIPAdapter, uploadApi]
   );
 
   return (
@@ -83,7 +76,7 @@ export const RegionalGuidanceIPAdapterSettingsEmptyState = memo(({ referenceImag
       </Flex>
       <Flex alignItems="center" gap={2} p={4}>
         <Text textAlign="center" color="base.300">
-          <Trans i18nKey="controlLayers.referenceImageEmptyState" components={components} />
+          <Trans i18nKey="controlLayers.referenceImageEmptyStateWithCanvasOptions" components={components} />
         </Text>
       </Flex>
       <input {...uploadApi.getUploadInputProps()} />

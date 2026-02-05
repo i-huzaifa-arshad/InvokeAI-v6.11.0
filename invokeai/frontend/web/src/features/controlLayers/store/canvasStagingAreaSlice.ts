@@ -1,103 +1,101 @@
 import { createSelector, createSlice, type PayloadAction } from '@reduxjs/toolkit';
-import type { PersistConfig, RootState } from 'app/store/store';
-import { deepClone } from 'common/util/deepClone';
-import { canvasReset } from 'features/controlLayers/store/actions';
-import type { StagingAreaImage } from 'features/controlLayers/store/types';
-import { selectCanvasQueueCounts } from 'services/api/endpoints/queue';
+import { EMPTY_ARRAY } from 'app/store/constants';
+import type { RootState } from 'app/store/store';
+import { useAppSelector } from 'app/store/storeHooks';
+import type { SliceConfig } from 'app/store/types';
+import { isPlainObject } from 'es-toolkit';
+import { getPrefixedId } from 'features/controlLayers/konva/util';
+import { useMemo } from 'react';
+import { queueApi } from 'services/api/endpoints/queue';
+import { assert } from 'tsafe';
+import z from 'zod';
 
-import { newSessionRequested } from './actions';
+const zCanvasStagingAreaState = z.object({
+  _version: z.literal(1),
+  canvasSessionId: z.string(),
+  canvasDiscardedQueueItems: z.array(z.number().int()),
+});
+type CanvasStagingAreaState = z.infer<typeof zCanvasStagingAreaState>;
 
-type CanvasStagingAreaState = {
-  stagedImages: StagingAreaImage[];
-  selectedStagedImageIndex: number;
-};
+const getInitialState = (): CanvasStagingAreaState => ({
+  _version: 1,
+  canvasSessionId: getPrefixedId('canvas'),
+  canvasDiscardedQueueItems: [],
+});
 
-const initialState: CanvasStagingAreaState = {
-  stagedImages: [],
-  selectedStagedImageIndex: 0,
-};
-
-export const canvasStagingAreaSlice = createSlice({
-  name: 'canvasStagingArea',
-  initialState,
+const slice = createSlice({
+  name: 'canvasSession',
+  initialState: getInitialState(),
   reducers: {
-    stagingAreaImageStaged: (state, action: PayloadAction<{ stagingAreaImage: StagingAreaImage }>) => {
-      const { stagingAreaImage } = action.payload;
-      state.stagedImages.push(stagingAreaImage);
-      state.selectedStagedImageIndex = state.stagedImages.length - 1;
+    canvasQueueItemDiscarded: (state, action: PayloadAction<{ itemId: number }>) => {
+      const { itemId } = action.payload;
+      if (!state.canvasDiscardedQueueItems.includes(itemId)) {
+        state.canvasDiscardedQueueItems.push(itemId);
+      }
     },
-    stagingAreaNextStagedImageSelected: (state) => {
-      state.selectedStagedImageIndex = (state.selectedStagedImageIndex + 1) % state.stagedImages.length;
+    canvasSessionReset: {
+      reducer: (state, action: PayloadAction<{ canvasSessionId: string }>) => {
+        const { canvasSessionId } = action.payload;
+        state.canvasSessionId = canvasSessionId;
+        state.canvasDiscardedQueueItems = [];
+      },
+      prepare: () => {
+        return {
+          payload: {
+            canvasSessionId: getPrefixedId('canvas'),
+          },
+        };
+      },
     },
-    stagingAreaPrevStagedImageSelected: (state) => {
-      state.selectedStagedImageIndex =
-        (state.selectedStagedImageIndex - 1 + state.stagedImages.length) % state.stagedImages.length;
-    },
-    stagingAreaStagedImageDiscarded: (state, action: PayloadAction<{ index: number }>) => {
-      const { index } = action.payload;
-      state.stagedImages.splice(index, 1);
-      state.selectedStagedImageIndex = Math.min(state.selectedStagedImageIndex, state.stagedImages.length - 1);
-    },
-    stagingAreaReset: (state) => {
-      state.stagedImages = [];
-      state.selectedStagedImageIndex = 0;
-    },
-  },
-  extraReducers(builder) {
-    builder.addCase(canvasReset, () => deepClone(initialState));
-    builder.addMatcher(newSessionRequested, () => deepClone(initialState));
   },
 });
 
-export const {
-  stagingAreaImageStaged,
-  stagingAreaStagedImageDiscarded,
-  stagingAreaReset,
-  stagingAreaNextStagedImageSelected,
-  stagingAreaPrevStagedImageSelected,
-} = canvasStagingAreaSlice.actions;
+export const { canvasSessionReset, canvasQueueItemDiscarded } = slice.actions;
 
-/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-const migrate = (state: any): any => {
-  return state;
+export const canvasSessionSliceConfig: SliceConfig<typeof slice> = {
+  slice,
+  schema: zCanvasStagingAreaState,
+  getInitialState,
+  persistConfig: {
+    migrate: (state) => {
+      assert(isPlainObject(state));
+      if (!('_version' in state)) {
+        state._version = 1;
+        state.canvasSessionId = state.canvasSessionId ?? getPrefixedId('canvas');
+      }
+
+      return zCanvasStagingAreaState.parse(state);
+    },
+  },
 };
 
-export const canvasStagingAreaPersistConfig: PersistConfig<CanvasStagingAreaState> = {
-  name: canvasStagingAreaSlice.name,
-  initialState,
-  migrate,
-  persistDenylist: [],
+export const selectCanvasSessionSlice = (s: RootState) => s[slice.name];
+export const selectCanvasSessionId = createSelector(selectCanvasSessionSlice, ({ canvasSessionId }) => canvasSessionId);
+
+const selectDiscardedItems = createSelector(
+  selectCanvasSessionSlice,
+  ({ canvasDiscardedQueueItems }) => canvasDiscardedQueueItems
+);
+
+export const buildSelectCanvasQueueItems = (sessionId: string) =>
+  createSelector(
+    [queueApi.endpoints.listAllQueueItems.select({ destination: sessionId }), selectDiscardedItems],
+    ({ data }, discardedItems) => {
+      if (!data) {
+        return EMPTY_ARRAY;
+      }
+      return data.filter(
+        ({ status, item_id }) => status !== 'canceled' && status !== 'failed' && !discardedItems.includes(item_id)
+      );
+    }
+  );
+
+export const buildSelectIsStaging = (sessionId: string) =>
+  createSelector([buildSelectCanvasQueueItems(sessionId)], (queueItems) => {
+    return queueItems.length > 0;
+  });
+export const useCanvasIsStaging = () => {
+  const sessionId = useAppSelector(selectCanvasSessionId);
+  const selector = useMemo(() => buildSelectIsStaging(sessionId), [sessionId]);
+  return useAppSelector(selector);
 };
-
-export const selectCanvasStagingAreaSlice = (s: RootState) => s.canvasStagingArea;
-
-/**
- * Selects if we should be staging images. This is true if:
- * - There are staged images.
- * - There are any in-progress or pending canvas queue items.
- */
-export const selectIsStaging = createSelector(
-  selectCanvasQueueCounts,
-  selectCanvasStagingAreaSlice,
-  ({ data }, staging) => {
-    if (staging.stagedImages.length > 0) {
-      return true;
-    }
-    if (!data) {
-      return false;
-    }
-    return data.in_progress > 0 || data.pending > 0;
-  }
-);
-export const selectStagedImageIndex = createSelector(
-  selectCanvasStagingAreaSlice,
-  (stagingArea) => stagingArea.selectedStagedImageIndex
-);
-export const selectSelectedImage = createSelector(
-  [selectCanvasStagingAreaSlice, selectStagedImageIndex],
-  (stagingArea, index) => stagingArea.stagedImages[index] ?? null
-);
-export const selectImageCount = createSelector(
-  selectCanvasStagingAreaSlice,
-  (stagingArea) => stagingArea.stagedImages.length
-);

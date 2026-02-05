@@ -10,8 +10,9 @@ import {
   IconButton,
 } from '@invoke-ai/ui-library';
 import { NUMPY_RAND_MAX } from 'app/constants';
-import { useAppStore } from 'app/store/nanostores/store';
+import { useAppStore } from 'app/store/storeHooks';
 import { getOverlayScrollbarsParams, overlayScrollbarsStyles } from 'common/components/OverlayScrollbars/constants';
+import { isNil } from 'es-toolkit/compat';
 import { useInputFieldIsInvalid } from 'features/nodes/hooks/useInputFieldIsInvalid';
 import { fieldIntegerCollectionValueChanged } from 'features/nodes/store/nodesSlice';
 import { NO_DRAG_CLASS, NO_WHEEL_CLASS } from 'features/nodes/types/constants';
@@ -19,7 +20,6 @@ import type {
   IntegerFieldCollectionInputInstance,
   IntegerFieldCollectionInputTemplate,
 } from 'features/nodes/types/field';
-import { isNil } from 'lodash-es';
 import { OverlayScrollbarsComponent } from 'overlayscrollbars-react';
 import { memo, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -43,7 +43,7 @@ export const IntegerFieldCollectionInputComponent = memo(
     const store = useAppStore();
     const { t } = useTranslation();
 
-    const isInvalid = useInputFieldIsInvalid(nodeId, field.name);
+    const isInvalid = useInputFieldIsInvalid(field.name);
 
     const onChangeValue = useCallback(
       (value: IntegerFieldCollectionInputInstance['value']) => {
@@ -206,6 +206,7 @@ const IntegerListItemContent = memo(
             fineStep={fineStep}
             className={NO_DRAG_CLASS}
             flexGrow={1}
+            allowMath
           />
         </GridItem>
         <GridItem>

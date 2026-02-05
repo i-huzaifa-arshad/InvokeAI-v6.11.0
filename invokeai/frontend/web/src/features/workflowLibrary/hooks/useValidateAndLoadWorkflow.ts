@@ -1,18 +1,22 @@
 import { logger } from 'app/logging/logger';
 import { useAppDispatch } from 'app/store/storeHooks';
+import { getIsFormEmpty } from 'features/nodes/components/sidePanel/builder/form-manipulation';
 import { $nodeExecutionStates } from 'features/nodes/hooks/useNodeExecutionState';
 import { $templates, workflowLoaded } from 'features/nodes/store/nodesSlice';
 import { $needsFit } from 'features/nodes/store/reactFlowInstance';
+import { workflowModeChanged } from 'features/nodes/store/workflowLibrarySlice';
 import { WorkflowMigrationError, WorkflowVersionError } from 'features/nodes/types/error';
 import type { WorkflowV3 } from 'features/nodes/types/workflow';
 import { validateWorkflow } from 'features/nodes/util/workflow/validateWorkflow';
 import { toast } from 'features/toast/toast';
+import { navigationApi } from 'features/ui/layouts/navigation-api';
+import { VIEWER_PANEL_ID, WORKSPACE_PANEL_ID } from 'features/ui/layouts/shared';
+import { t } from 'i18next';
 import { useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 import { serializeError } from 'serialize-error';
 import { checkBoardAccess, checkImageAccess, checkModelAccess } from 'services/api/hooks/accessChecks';
 import { z } from 'zod';
-import { fromZodError } from 'zod-validation-error';
+import { fromZodError } from 'zod-validation-error/v4';
 
 const log = logger('workflows');
 
@@ -32,7 +36,6 @@ const log = logger('workflows');
  * ...each of which internally uses hook.
  */
 export const useValidateAndLoadWorkflow = () => {
-  const { t } = useTranslation();
   const dispatch = useAppDispatch();
   const validateAndLoadWorkflow = useCallback(
     /**
@@ -65,6 +68,17 @@ export const useValidateAndLoadWorkflow = () => {
 
         $nodeExecutionStates.set({});
         dispatch(workflowLoaded(workflow));
+
+        // If the form is empty, assume the user is editing a new workflow.
+        if (getIsFormEmpty(workflow.form)) {
+          dispatch(workflowModeChanged('edit'));
+          navigationApi.focusPanel('workflows', WORKSPACE_PANEL_ID);
+        } else {
+          // Else assume they want to use the linear view of the workflow.
+          dispatch(workflowModeChanged('view'));
+          navigationApi.focusPanel('workflows', VIEWER_PANEL_ID);
+        }
+
         if (!warnings.length) {
           toast({
             id: 'WORKFLOW_LOADED',
@@ -129,7 +143,7 @@ export const useValidateAndLoadWorkflow = () => {
         return null;
       }
     },
-    [dispatch, t]
+    [dispatch]
   );
 
   return validateAndLoadWorkflow;

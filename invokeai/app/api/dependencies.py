@@ -10,6 +10,7 @@ from invokeai.app.services.board_images.board_images_default import BoardImagesS
 from invokeai.app.services.board_records.board_records_sqlite import SqliteBoardRecordStorage
 from invokeai.app.services.boards.boards_default import BoardService
 from invokeai.app.services.bulk_download.bulk_download_default import BulkDownloadService
+from invokeai.app.services.client_state_persistence.client_state_persistence_sqlite import ClientStatePersistenceSqlite
 from invokeai.app.services.config.config_default import InvokeAIAppConfig
 from invokeai.app.services.download.download_default import DownloadQueueService
 from invokeai.app.services.events.events_fastapievents import FastAPIEventService
@@ -48,6 +49,7 @@ from invokeai.backend.stable_diffusion.diffusion.conditioning_data import (
     FLUXConditioningInfo,
     SD3ConditioningInfo,
     SDXLConditioningInfo,
+    ZImageConditioningInfo,
 )
 from invokeai.backend.util.logging import InvokeAILogger
 from invokeai.version.invokeai_version import __version__
@@ -128,6 +130,7 @@ class ApiDependencies:
                     FLUXConditioningInfo,
                     SD3ConditioningInfo,
                     CogView4ConditioningInfo,
+                    ZImageConditioningInfo,
                 ],
                 ephemeral=True,
             ),
@@ -151,6 +154,7 @@ class ApiDependencies:
         style_preset_records = SqliteStylePresetRecordsStorage(db=db)
         style_preset_image_files = StylePresetImageFileStorageDisk(style_presets_folder / "images")
         workflow_thumbnails = WorkflowThumbnailFileStorageDisk(workflow_thumbnails_folder)
+        client_state_persistence = ClientStatePersistenceSqlite(db=db)
 
         services = InvocationServices(
             board_image_records=board_image_records,
@@ -181,6 +185,7 @@ class ApiDependencies:
             style_preset_records=style_preset_records,
             style_preset_image_files=style_preset_image_files,
             workflow_thumbnails=workflow_thumbnails,
+            client_state_persistence=client_state_persistence,
         )
 
         ApiDependencies.invoker = Invoker(services)

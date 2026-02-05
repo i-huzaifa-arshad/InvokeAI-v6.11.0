@@ -27,6 +27,7 @@ from invokeai.app.invocations.fields import (
     SD3ConditioningField,
     TensorField,
     UIComponent,
+    ZImageConditioningField,
 )
 from invokeai.app.services.images.images_common import ImageDTO
 from invokeai.app.services.shared.invocation_context import InvocationContext
@@ -430,6 +431,15 @@ class FluxConditioningOutput(BaseInvocationOutput):
         return cls(conditioning=FluxConditioningField(conditioning_name=conditioning_name))
 
 
+@invocation_output("flux_conditioning_collection_output")
+class FluxConditioningCollectionOutput(BaseInvocationOutput):
+    """Base class for nodes that output a collection of conditioning tensors"""
+
+    collection: list[FluxConditioningField] = OutputField(
+        description="The output conditioning tensors",
+    )
+
+
 @invocation_output("sd3_conditioning_output")
 class SD3ConditioningOutput(BaseInvocationOutput):
     """Base class for nodes that output a single SD3 conditioning tensor"""
@@ -450,6 +460,17 @@ class CogView4ConditioningOutput(BaseInvocationOutput):
     @classmethod
     def build(cls, conditioning_name: str) -> "CogView4ConditioningOutput":
         return cls(conditioning=CogView4ConditioningField(conditioning_name=conditioning_name))
+
+
+@invocation_output("z_image_conditioning_output")
+class ZImageConditioningOutput(BaseInvocationOutput):
+    """Base class for nodes that output a Z-Image text conditioning tensor."""
+
+    conditioning: ZImageConditioningField = OutputField(description=FieldDescriptions.cond)
+
+    @classmethod
+    def build(cls, conditioning_name: str) -> "ZImageConditioningOutput":
+        return cls(conditioning=ZImageConditioningField(conditioning_name=conditioning_name))
 
 
 @invocation_output("conditioning_output")

@@ -1,8 +1,7 @@
+import { objectEquals } from '@observ33r/object-equals';
 import { createAction } from '@reduxjs/toolkit';
 import { logger } from 'app/logging/logger';
-import type { AppStartListening } from 'app/store/middleware/listenerMiddleware';
-import { $baseUrl } from 'app/store/nanostores/baseUrl';
-import { isEqual } from 'lodash-es';
+import type { AppStartListening } from 'app/store/store';
 import { atom } from 'nanostores';
 import { api } from 'services/api';
 import { modelsApi } from 'services/api/endpoints/models';
@@ -16,7 +15,7 @@ export const socketConnected = createAction('socket/connected');
 export const addSocketConnectedEventListener = (startAppListening: AppStartListening) => {
   startAppListening({
     actionCreator: socketConnected,
-    effect: async (action, { dispatch, getState, cancelActiveListeners, delay }) => {
+    effect: async (action, { dispatch, getState }) => {
       /**
        * The rest of this listener has recovery logic for when the socket disconnects and reconnects.
        *
@@ -43,20 +42,12 @@ export const addSocketConnectedEventListener = (startAppListening: AppStartListe
 
       // Else, we need to compare the last-known queue status with the current queue status, re-fetching
       // everything if it has changed.
-
-      if ($baseUrl.get()) {
-        // If we have a baseUrl (e.g. not localhost), we need to debounce the re-fetch to not hammer server
-        cancelActiveListeners();
-        // Add artificial jitter to the debounce
-        await delay(1000 + Math.random() * 1000);
-      }
-
       const prevQueueStatusData = selectQueueStatus(getState()).data;
 
       try {
         // Fetch the queue status again
         const queueStatusRequest = dispatch(
-          await queueApi.endpoints.getQueueStatus.initiate(undefined, {
+          queueApi.endpoints.getQueueStatus.initiate(undefined, {
             forceRefetch: true,
             subscribe: false,
           })
@@ -64,7 +55,7 @@ export const addSocketConnectedEventListener = (startAppListening: AppStartListe
         const nextQueueStatusData = await queueStatusRequest.unwrap();
 
         // If the queue hasn't changed, we don't need to do anything.
-        if (isEqual(prevQueueStatusData?.queue, nextQueueStatusData.queue)) {
+        if (objectEquals(prevQueueStatusData?.queue, nextQueueStatusData.queue)) {
           return;
         }
 

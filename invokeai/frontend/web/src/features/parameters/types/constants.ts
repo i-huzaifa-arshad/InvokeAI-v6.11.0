@@ -1,46 +1,10 @@
 import type { ComboboxOption } from '@invoke-ai/ui-library';
-import type { BaseModelType } from 'services/api/types';
-
-/**
- * Mapping of base model to human readable name
- */
-export const MODEL_TYPE_MAP: Record<BaseModelType, string> = {
-  any: 'Any',
-  'sd-1': 'Stable Diffusion 1.x',
-  'sd-2': 'Stable Diffusion 2.x',
-  'sd-3': 'Stable Diffusion 3.x',
-  sdxl: 'Stable Diffusion XL',
-  'sdxl-refiner': 'Stable Diffusion XL Refiner',
-  flux: 'FLUX',
-  cogview4: 'CogView4',
-  imagen3: 'Imagen3',
-  imagen4: 'Imagen4',
-  'chatgpt-4o': 'ChatGPT 4o',
-  'flux-kontext': 'Flux Kontext',
-};
-
-/**
- * Mapping of base model to (short) human readable name
- */
-export const MODEL_TYPE_SHORT_MAP: Record<BaseModelType, string> = {
-  any: 'Any',
-  'sd-1': 'SD1.X',
-  'sd-2': 'SD2.X',
-  'sd-3': 'SD3.X',
-  sdxl: 'SDXL',
-  'sdxl-refiner': 'SDXLR',
-  flux: 'FLUX',
-  cogview4: 'CogView4',
-  imagen3: 'Imagen3',
-  imagen4: 'Imagen4',
-  'chatgpt-4o': 'ChatGPT 4o',
-  'flux-kontext': 'Flux Kontext',
-};
+import type { BaseModelType } from 'features/nodes/types/common';
 
 /**
  * Mapping of base model to CLIP skip parameter constraints
  */
-export const CLIP_SKIP_MAP: Record<BaseModelType, { maxClip: number; markers: number[] }> = {
+export const CLIP_SKIP_MAP: { [key in BaseModelType]?: { maxClip: number; markers: number[] } } = {
   any: {
     maxClip: 0,
     markers: [],
@@ -73,19 +37,7 @@ export const CLIP_SKIP_MAP: Record<BaseModelType, { maxClip: number; markers: nu
     maxClip: 0,
     markers: [],
   },
-  imagen3: {
-    maxClip: 0,
-    markers: [],
-  },
-  imagen4: {
-    maxClip: 0,
-    markers: [],
-  },
-  'chatgpt-4o': {
-    maxClip: 0,
-    markers: [],
-  },
-  'flux-kontext': {
+  'z-image': {
     maxClip: 0,
     markers: [],
   },
@@ -126,8 +78,3 @@ export const SCHEDULER_OPTIONS: ComboboxOption[] = [
   { value: 'unipc', label: 'UniPC' },
   { value: 'unipc_k', label: 'UniPC Karras' },
 ];
-
-/**
- * List of base models that make API requests
- */
-export const API_BASE_MODELS = ['imagen3', 'imagen4', 'chatgpt-4o', 'flux-kontext'];

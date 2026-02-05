@@ -1,31 +1,22 @@
-import { ExternalLink } from '@invoke-ai/ui-library';
-import { isAnyOf } from '@reduxjs/toolkit';
+import { ExternalLink, Flex, Text } from '@invoke-ai/ui-library';
 import { logger } from 'app/logging/logger';
-import { listenerMiddleware } from 'app/store/middleware/listenerMiddleware';
 import { socketConnected } from 'app/store/middleware/listenerMiddleware/listeners/socketConnected';
-import { $baseUrl } from 'app/store/nanostores/baseUrl';
-import { $bulkDownloadId } from 'app/store/nanostores/bulkDownloadId';
-import { $queueId } from 'app/store/nanostores/queueId';
 import type { AppStore } from 'app/store/store';
 import { deepClone } from 'common/util/deepClone';
-import {
-  $isInPublishFlow,
-  $outputNodeId,
-  $validationRunData,
-} from 'features/nodes/components/sidePanel/workflow/publish';
+import { forEach, isNil, round } from 'es-toolkit/compat';
 import { $nodeExecutionStates, upsertExecutionState } from 'features/nodes/hooks/useNodeExecutionState';
 import { zNodeStatus } from 'features/nodes/types/invocation';
 import ErrorToastDescription, { getTitle } from 'features/toast/ErrorToastDescription';
 import { toast } from 'features/toast/toast';
 import { t } from 'i18next';
-import { forEach, isNil, round } from 'lodash-es';
+import { LRUCache } from 'lru-cache';
+import { Trans } from 'react-i18next';
 import type { ApiTagDescription } from 'services/api';
-import { api, LIST_TAG } from 'services/api';
+import { api, LIST_ALL_TAG, LIST_TAG } from 'services/api';
 import { modelsApi } from 'services/api/endpoints/models';
-import { queueApi, queueItemsAdapter } from 'services/api/endpoints/queue';
-import { workflowsApi } from 'services/api/endpoints/workflows';
+import { queueApi } from 'services/api/endpoints/queue';
 import { buildOnInvocationComplete } from 'services/events/onInvocationComplete';
-import { buildOnModelInstallError } from 'services/events/onModelInstallError';
+import { buildOnModelInstallError, DiscordLink, GitHubIssuesLink } from 'services/events/onModelInstallError';
 import type { ClientToServerEvents, ServerToClientEvents } from 'services/events/types';
 import type { Socket } from 'socket.io-client';
 import type { JsonObject } from 'type-fest';
@@ -42,19 +33,23 @@ type SetEventListenersArg = {
 
 const selectModelInstalls = modelsApi.endpoints.listModelInstalls.select();
 
+/**
+ * Sets up event listeners for the socketio client. Some components will set up their own listeners. These are the ones
+ * that have app-wide implications.
+ */
 export const setEventListeners = ({ socket, store, setIsConnected }: SetEventListenersArg) => {
   const { dispatch, getState } = store;
+
+  // We can have race conditions where we receive a progress event for a queue item that has already finished. Easiest
+  // way to handle this is to keep track of finished queue items in a cache and ignore progress events for those.
+  const finishedQueueItemIds = new LRUCache<number, boolean>({ max: 100 });
 
   socket.on('connect', () => {
     log.debug('Connected');
     setIsConnected(true);
     dispatch(socketConnected());
-    const queue_id = $queueId.get();
-    socket.emit('subscribe_queue', { queue_id });
-    if (!$baseUrl.get()) {
-      const bulk_download_id = $bulkDownloadId.get();
-      socket.emit('subscribe_bulk_download', { bulk_download_id });
-    }
+    socket.emit('subscribe_queue', { queue_id: 'default' });
+    socket.emit('subscribe_bulk_download', { bulk_download_id: 'default' });
     $lastProgressEvent.set(null);
   });
 
@@ -82,6 +77,9 @@ export const setEventListeners = ({ socket, store, setIsConnected }: SetEventLis
   });
 
   socket.on('invocation_started', (data) => {
+    if (finishedQueueItemIds.has(data.item_id)) {
+      return;
+    }
     const { invocation_source_id, invocation } = data;
     log.debug({ data } as JsonObject, `Invocation started (${invocation.type}, ${invocation_source_id})`);
     const nes = deepClone($nodeExecutionStates.get()[invocation_source_id]);
@@ -92,6 +90,10 @@ export const setEventListeners = ({ socket, store, setIsConnected }: SetEventLis
   });
 
   socket.on('invocation_progress', (data) => {
+    if (finishedQueueItemIds.has(data.item_id)) {
+      log.trace({ data } as JsonObject, `Received event for already-finished queue item ${data.item_id}`);
+      return;
+    }
     const { invocation_source_id, invocation, image, origin, percentage, message } = data;
 
     let _message = 'Invocation progress';
@@ -119,6 +121,10 @@ export const setEventListeners = ({ socket, store, setIsConnected }: SetEventLis
   });
 
   socket.on('invocation_error', (data) => {
+    if (finishedQueueItemIds.has(data.item_id)) {
+      log.trace({ data } as JsonObject, `Received event for already-finished queue item ${data.item_id}`);
+      return;
+    }
     const { invocation_source_id, invocation, error_type, error_message, error_traceback } = data;
     log.error({ data } as JsonObject, `Invocation error (${invocation.type}, ${invocation_source_id})`);
     const nes = deepClone($nodeExecutionStates.get()[invocation_source_id]);
@@ -135,7 +141,7 @@ export const setEventListeners = ({ socket, store, setIsConnected }: SetEventLis
     }
   });
 
-  const onInvocationComplete = buildOnInvocationComplete(getState, dispatch);
+  const onInvocationComplete = buildOnInvocationComplete(getState, dispatch, finishedQueueItemIds);
   socket.on('invocation_complete', onInvocationComplete);
 
   socket.on('model_load_started', (data) => {
@@ -276,7 +282,30 @@ export const setEventListeners = ({ socket, store, setIsConnected }: SetEventLis
   socket.on('model_install_complete', (data) => {
     log.debug({ data }, 'Model install complete');
 
-    const { id } = data;
+    const { id, config } = data;
+
+    if (config.type === 'unknown') {
+      toast({
+        id: 'UNKNOWN_MODEL',
+        title: t('modelManager.unidentifiedModelTitle'),
+        description: (
+          <Flex flexDir="column" gap={2}>
+            <Text fontSize="md" as="span">
+              <Trans i18nKey="modelManager.unidentifiedModelMessage" />
+            </Text>
+            <Text fontSize="md" as="span">
+              <Trans
+                i18nKey="modelManager.unidentifiedModelMessage2"
+                components={{ DiscordLink: <DiscordLink />, GitHubIssuesLink: <GitHubIssuesLink /> }}
+              />
+            </Text>
+          </Flex>
+        ),
+        status: 'error',
+        isClosable: true,
+        duration: null,
+      });
+    }
 
     const installs = selectModelInstalls(getState()).data;
 
@@ -323,61 +352,39 @@ export const setEventListeners = ({ socket, store, setIsConnected }: SetEventLis
   });
 
   socket.on('queue_item_status_changed', (data) => {
+    if (finishedQueueItemIds.has(data.item_id)) {
+      log.trace({ data }, `Received event for already-finished queue item ${data.item_id}`);
+      return;
+    }
+
     // we've got new status for the queue item, batch and queue
     const {
       item_id,
-      session_id,
       status,
+      batch_status,
+      error_type,
+      error_message,
+      destination,
       started_at,
       updated_at,
       completed_at,
-      batch_status,
-      queue_status,
-      error_type,
-      error_message,
       error_traceback,
-      destination,
-      credits,
     } = data;
 
     log.debug({ data }, `Queue item ${item_id} status updated: ${status}`);
 
-    // Update this specific queue item in the list of queue items (this is the queue item DTO, without the session)
+    // // Update this specific queue item in the list of queue items
     dispatch(
-      queueApi.util.updateQueryData('listQueueItems', undefined, (draft) => {
-        queueItemsAdapter.updateOne(draft, {
-          id: String(item_id),
-          changes: {
-            status,
-            started_at,
-            updated_at: updated_at ?? undefined,
-            completed_at: completed_at ?? undefined,
-            error_type,
-            error_message,
-            error_traceback,
-            credits,
-          },
-        });
+      queueApi.util.updateQueryData('getQueueItem', item_id, (draft) => {
+        draft.status = status;
+        draft.started_at = started_at;
+        draft.updated_at = updated_at;
+        draft.completed_at = completed_at;
+        draft.error_type = error_type;
+        draft.error_message = error_message;
+        draft.error_traceback = error_traceback;
       })
     );
-
-    // Optimistic update of the queue status. We prefer to do an optimistic update over tag invalidation due to the
-    // frequency of `queue_item_status_changed` events.
-    dispatch(
-      queueApi.util.updateQueryData('getQueueStatus', undefined, (draft) => {
-        if (!draft) {
-          return;
-        }
-        /**
-         * Update the queue status - though the getQueueStatus query response contains the processor status (i.e. running
-         * or paused), that data is not provided in the event we are handling. So we can only update `draft.queue` here.
-         */
-        Object.assign(draft.queue, queue_status);
-      })
-    );
-
-    // Update the batch status
-    dispatch(queueApi.util.updateQueryData('getBatchStatus', { batch_id: batch_status.batch_id }, () => batch_status));
 
     // Invalidate caches for things we cannot easily update
     const tagsToInvalidate: ApiTagDescription[] = [
@@ -385,11 +392,24 @@ export const setEventListeners = ({ socket, store, setIsConnected }: SetEventLis
       'NextSessionQueueItem',
       'InvocationCacheStatus',
       { type: 'SessionQueueItem', id: item_id },
+      { type: 'SessionQueueItem', id: LIST_TAG },
+      { type: 'SessionQueueItem', id: LIST_ALL_TAG },
+      { type: 'BatchStatus', id: batch_status.batch_id },
     ];
     if (destination) {
       tagsToInvalidate.push({ type: 'QueueCountsByDestination', id: destination });
     }
     dispatch(queueApi.util.invalidateTags(tagsToInvalidate));
+    dispatch(
+      queueApi.util.updateQueryData('getQueueStatus', undefined, (draft) => {
+        draft.queue = data.queue_status;
+      })
+    );
+    dispatch(
+      queueApi.util.updateQueryData('getBatchStatus', { batch_id: data.batch_id }, (draft) => {
+        Object.assign(draft, data.batch_status);
+      })
+    );
 
     if (status === 'in_progress') {
       forEach($nodeExecutionStates.get(), (nes) => {
@@ -405,67 +425,19 @@ export const setEventListeners = ({ socket, store, setIsConnected }: SetEventLis
         $nodeExecutionStates.setKey(clone.nodeId, clone);
       });
     } else if (status === 'completed' || status === 'failed' || status === 'canceled') {
+      finishedQueueItemIds.set(item_id, true);
       if (status === 'failed' && error_type) {
-        const isLocal = getState().config.isLocal ?? true;
-        const sessionId = session_id;
-
         toast({
           id: `INVOCATION_ERROR_${error_type}`,
           title: getTitle(error_type),
           status: 'error',
           duration: null,
-          updateDescription: isLocal,
-          description: (
-            <ErrorToastDescription
-              errorType={error_type}
-              errorMessage={error_message}
-              sessionId={sessionId}
-              isLocal={isLocal}
-            />
-          ),
+          updateDescription: true,
+          description: <ErrorToastDescription errorType={error_type} errorMessage={error_message} />,
         });
       }
       // If the queue item is completed, failed, or cancelled, we want to clear the last progress event
       $lastProgressEvent.set(null);
-
-      // When a validation run is completed, we want to clear the validation run batch ID & set the workflow as published
-      const validationRunData = $validationRunData.get();
-      if (!validationRunData || batch_status.batch_id !== validationRunData.batchId || status !== 'completed') {
-        return;
-      }
-
-      // The published status of a workflow is server state, provided to the client in by the getWorkflow query.
-      // After successfully publishing a workflow, we need to invalidate the query cache so that the published status is
-      // seen throughout the app. We also need to reset the publish flow state.
-      //
-      // But, there is a race condition! If we invalidate the query cache and then immediately clear the publish flow state,
-      // between the time when the publish state is cleared and the query is re-fetched, we will render the wrong UI.
-      //
-      // So, we really need to wait for the query re-fetch to complete before clearing the publish flow state. This isn't
-      // possible using the `invalidateTags()` API. But we can fudge it by adding a once-off listener for that query.
-
-      listenerMiddleware.startListening({
-        matcher: isAnyOf(
-          workflowsApi.endpoints.getWorkflow.matchFulfilled,
-          workflowsApi.endpoints.getWorkflow.matchRejected
-        ),
-        effect: (action, listenerApi) => {
-          if (workflowsApi.endpoints.getWorkflow.matchFulfilled(action)) {
-            // If this query was re-fetching the workflow that was just published, we can clear the publish flow state and
-            // unsubscribe from the listener
-            if (action.payload.workflow_id === validationRunData.workflowId) {
-              listenerApi.unsubscribe();
-              $validationRunData.set(null);
-              $isInPublishFlow.set(false);
-              $outputNodeId.set(null);
-            }
-          } else if (workflowsApi.endpoints.getWorkflow.matchRejected(action)) {
-            // If the query failed, we can unsubscribe from the listener
-            listenerApi.unsubscribe();
-          }
-        },
-      });
-      dispatch(workflowsApi.util.invalidateTags([{ type: 'Workflow', id: validationRunData.workflowId }]));
     }
   });
 

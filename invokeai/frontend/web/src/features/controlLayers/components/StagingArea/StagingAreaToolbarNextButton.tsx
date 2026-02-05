@@ -1,38 +1,35 @@
 import { IconButton } from '@invoke-ai/ui-library';
 import { useStore } from '@nanostores/react';
-import { useAppDispatch, useAppSelector } from 'app/store/storeHooks';
 import { useIsRegionFocused } from 'common/hooks/focus';
+import { useStagingAreaContext } from 'features/controlLayers/components/StagingArea/context';
 import { useCanvasManager } from 'features/controlLayers/contexts/CanvasManagerProviderGate';
-import {
-  selectImageCount,
-  stagingAreaNextStagedImageSelected,
-} from 'features/controlLayers/store/canvasStagingAreaSlice';
 import { memo, useCallback } from 'react';
 import { useHotkeys } from 'react-hotkeys-hook';
 import { useTranslation } from 'react-i18next';
 import { PiArrowRightBold } from 'react-icons/pi';
 
 export const StagingAreaToolbarNextButton = memo(() => {
-  const dispatch = useAppDispatch();
   const canvasManager = useCanvasManager();
-  const imageCount = useAppSelector(selectImageCount);
   const shouldShowStagedImage = useStore(canvasManager.stagingArea.$shouldShowStagedImage);
+
+  const ctx = useStagingAreaContext();
+  const itemCount = useStore(ctx.$itemCount);
   const isCanvasFocused = useIsRegionFocused('canvas');
 
   const { t } = useTranslation();
 
   const selectNext = useCallback(() => {
-    dispatch(stagingAreaNextStagedImageSelected());
-  }, [dispatch]);
+    ctx.selectNext();
+  }, [ctx]);
 
   useHotkeys(
     ['right'],
-    selectNext,
+    ctx.selectNext,
     {
       preventDefault: true,
-      enabled: isCanvasFocused && shouldShowStagedImage && imageCount > 1,
+      enabled: isCanvasFocused && shouldShowStagedImage && itemCount > 1,
     },
-    [isCanvasFocused, shouldShowStagedImage, imageCount]
+    [isCanvasFocused, shouldShowStagedImage, itemCount, ctx.selectNext]
   );
 
   return (
@@ -42,7 +39,7 @@ export const StagingAreaToolbarNextButton = memo(() => {
       icon={<PiArrowRightBold />}
       onClick={selectNext}
       colorScheme="invokeBlue"
-      isDisabled={imageCount <= 1 || !shouldShowStagedImage}
+      isDisabled={itemCount <= 1 || !shouldShowStagedImage}
     />
   );
 });

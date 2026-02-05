@@ -1,6 +1,6 @@
 import type { Selector, Store } from '@reduxjs/toolkit';
-import { $authToken } from 'app/store/nanostores/authToken';
 import { roundDownToMultiple, roundUpToMultiple } from 'common/util/roundDownToMultiple';
+import { clamp } from 'es-toolkit/compat';
 import type {
   CanvasEntityIdentifier,
   CanvasObjectState,
@@ -8,11 +8,11 @@ import type {
   CoordinateWithPressure,
   Rect,
   RgbaColor,
+  StageAttrs,
 } from 'features/controlLayers/store/types';
 import type Konva from 'konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import type { Vector2d } from 'konva/lib/types';
-import { clamp } from 'lodash-es';
 import { customAlphabet } from 'nanoid';
 import type { StrokeOptions } from 'perfect-freehand';
 import getStroke from 'perfect-freehand';
@@ -320,6 +320,7 @@ export const downloadBlob = (blob: Blob, fileName: string) => {
   a.click();
   document.body.removeChild(a);
   a.remove();
+  URL.revokeObjectURL(url);
 };
 
 /**
@@ -362,14 +363,20 @@ export const dataURLToImageData = (dataURL: string, width: number, height: numbe
       reject(e);
     };
 
-    image.crossOrigin = $authToken.get() ? 'use-credentials' : 'anonymous';
+    image.crossOrigin = 'anonymous';
     image.src = dataURL;
   });
 };
 
-export const konvaNodeToCanvas = (arg: { node: Konva.Node; rect?: Rect; bg?: string }): HTMLCanvasElement => {
-  const { node, rect, bg } = arg;
-  const canvas = node.toCanvas({ ...(rect ?? {}), imageSmoothingEnabled: false, pixelRatio: 1 });
+export const konvaNodeToCanvas = (arg: {
+  node: Konva.Node;
+  rect?: Rect;
+  bg?: string;
+  imageSmoothingEnabled?: boolean;
+  pixelRatio?: number;
+}): HTMLCanvasElement => {
+  const { node, rect, bg, imageSmoothingEnabled = false, pixelRatio = 1 } = arg;
+  const canvas = node.toCanvas({ ...(rect ?? {}), imageSmoothingEnabled, pixelRatio });
 
   if (!bg) {
     return canvas;
@@ -381,7 +388,7 @@ export const konvaNodeToCanvas = (arg: { node: Konva.Node; rect?: Rect; bg?: str
   bgCanvas.height = canvas.height;
   const bgCtx = bgCanvas.getContext('2d');
   assert(bgCtx !== null, 'bgCtx is null');
-  bgCtx.imageSmoothingEnabled = false;
+  bgCtx.imageSmoothingEnabled = imageSmoothingEnabled;
   bgCtx.fillStyle = bg;
   bgCtx.fillRect(0, 0, bgCanvas.width, bgCanvas.height);
   bgCtx.drawImage(canvas, 0, 0);
@@ -418,9 +425,15 @@ export const canvasToImageData = (canvas: HTMLCanvasElement): ImageData => {
  * @param rect - The bounding box to crop to
  * @returns A Promise that resolves with ImageData object of the node cropped to the bounding box
  */
-export const konvaNodeToImageData = (arg: { node: Konva.Node; rect?: Rect; bg?: string }): ImageData => {
-  const { node, rect, bg } = arg;
-  const canvas = konvaNodeToCanvas({ node, rect, bg });
+export const konvaNodeToImageData = (arg: {
+  node: Konva.Node;
+  rect?: Rect;
+  bg?: string;
+  imageSmoothingEnabled?: boolean;
+  pixelRatio?: number;
+}): ImageData => {
+  const { node, rect, bg, imageSmoothingEnabled, pixelRatio } = arg;
+  const canvas = konvaNodeToCanvas({ node, rect, bg, imageSmoothingEnabled, pixelRatio });
   return canvasToImageData(canvas);
 };
 
@@ -430,9 +443,15 @@ export const konvaNodeToImageData = (arg: { node: Konva.Node; rect?: Rect; bg?: 
  * @param rect - The bounding box to crop to
  * @returns A Promise that resolves to the Blob or null,
  */
-export const konvaNodeToBlob = (arg: { node: Konva.Node; rect?: Rect; bg?: string }): Promise<Blob> => {
-  const { node, rect, bg } = arg;
-  const canvas = konvaNodeToCanvas({ node, rect, bg });
+export const konvaNodeToBlob = (arg: {
+  node: Konva.Node;
+  rect?: Rect;
+  bg?: string;
+  imageSmoothingEnabled?: boolean;
+  pixelRatio?: number;
+}): Promise<Blob> => {
+  const { node, rect, bg, imageSmoothingEnabled, pixelRatio } = arg;
+  const canvas = konvaNodeToCanvas({ node, rect, bg, imageSmoothingEnabled, pixelRatio });
   return canvasToBlob(canvas);
 };
 
@@ -476,23 +495,14 @@ export function getImageDataTransparency(imageData: ImageData): Transparency {
 /**
  * Loads an image from a URL and returns a promise that resolves with the loaded image element.
  * @param src The image source URL
- * @param fetchUrlFirst Whether to fetch the image's URL first, assuming the provided `src` will redirect to a different URL. This addresses an issue where CORS headers are dropped during a redirect.
  * @returns A promise that resolves with the loaded image element
  */
-export async function loadImage(src: string, fetchUrlFirst?: boolean): Promise<HTMLImageElement> {
-  const authToken = $authToken.get();
-  let url = src;
-  if (authToken && fetchUrlFirst) {
-    const response = await fetch(`${src}?url_only=true`, { credentials: 'include' });
-    const data = await response.json();
-    url = data.url;
-  }
-
+export function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const imageElement = new Image();
     imageElement.onload = () => resolve(imageElement);
     imageElement.onerror = (error) => reject(error);
-    imageElement.crossOrigin = $authToken.get() ? 'use-credentials' : 'anonymous';
+    imageElement.crossOrigin = 'anonymous';
     imageElement.src = url;
   });
 }
@@ -768,4 +778,8 @@ export const roundRect = (rect: Rect): Rect => {
     width: Math.round(rect.width),
     height: Math.round(rect.height),
   };
+};
+
+export const areStageAttrsGonnaExplode = (stageAttrs: StageAttrs): boolean => {
+  return stageAttrs.height === 0 || stageAttrs.width === 0 || stageAttrs.scale === 0;
 };

@@ -16,13 +16,12 @@ from invokeai.app.invocations.fields import (
     FieldDescriptions,
     FluxConditioningField,
     FluxFillConditioningField,
+    FluxKontextConditioningField,
     FluxReduxConditioningField,
     ImageField,
     Input,
     InputField,
     LatentsField,
-    WithBoard,
-    WithMetadata,
 )
 from invokeai.app.invocations.flux_controlnet import FluxControlNetField
 from invokeai.app.invocations.flux_vae_encode import FluxVaeEncodeInvocation
@@ -33,7 +32,15 @@ from invokeai.app.services.shared.invocation_context import InvocationContext
 from invokeai.backend.flux.controlnet.instantx_controlnet_flux import InstantXControlNetFlux
 from invokeai.backend.flux.controlnet.xlabs_controlnet_flux import XLabsControlNetFlux
 from invokeai.backend.flux.denoise import denoise
+from invokeai.backend.flux.dype.presets import (
+    DYPE_PRESET_LABELS,
+    DYPE_PRESET_OFF,
+    DyPEPreset,
+    get_dype_config_from_preset,
+)
+from invokeai.backend.flux.extensions.dype_extension import DyPEExtension
 from invokeai.backend.flux.extensions.instantx_controlnet_extension import InstantXControlNetExtension
+from invokeai.backend.flux.extensions.kontext_extension import KontextExtension
 from invokeai.backend.flux.extensions.regional_prompting_extension import RegionalPromptingExtension
 from invokeai.backend.flux.extensions.xlabs_controlnet_extension import XLabsControlNetExtension
 from invokeai.backend.flux.extensions.xlabs_ip_adapter_extension import XLabsIPAdapterExtension
@@ -47,8 +54,9 @@ from invokeai.backend.flux.sampling_utils import (
     pack,
     unpack,
 )
+from invokeai.backend.flux.schedulers import FLUX_SCHEDULER_LABELS, FLUX_SCHEDULER_MAP, FLUX_SCHEDULER_NAME_VALUES
 from invokeai.backend.flux.text_conditioning import FluxReduxConditioning, FluxTextConditioning
-from invokeai.backend.model_manager.taxonomy import ModelFormat, ModelVariantType
+from invokeai.backend.model_manager.taxonomy import BaseModelType, FluxVariantType, ModelFormat, ModelType
 from invokeai.backend.patches.layer_patcher import LayerPatcher
 from invokeai.backend.patches.lora_conversions.flux_lora_constants import FLUX_LORA_TRANSFORMER_PREFIX
 from invokeai.backend.patches.model_patch_raw import ModelPatchRaw
@@ -63,9 +71,9 @@ from invokeai.backend.util.devices import TorchDevice
     title="FLUX Denoise",
     tags=["image", "flux"],
     category="image",
-    version="3.3.0",
+    version="4.5.0",
 )
-class FluxDenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
+class FluxDenoiseInvocation(BaseInvocation):
     """Run denoising process with a FLUX transformer model."""
 
     # If latents is provided, this means we are doing image-to-image.
@@ -132,6 +140,12 @@ class FluxDenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
     num_steps: int = InputField(
         default=4, description="Number of diffusion steps. Recommended values are schnell: 4, dev: 50."
     )
+    scheduler: FLUX_SCHEDULER_NAME_VALUES = InputField(
+        default="euler",
+        description="Scheduler (sampler) for the denoising process. 'euler' is fast and standard. "
+        "'heun' is 2nd-order (better quality, 2x slower). 'lcm' is optimized for few steps.",
+        ui_choice_labels=FLUX_SCHEDULER_LABELS,
+    )
     guidance: float = InputField(
         default=4.0,
         description="The guidance strength. Higher values adhere more strictly to the prompt, and will produce less diverse images. FLUX dev only, ignored for schnell.",
@@ -145,9 +159,40 @@ class FluxDenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
         description=FieldDescriptions.vae,
         input=Input.Connection,
     )
+    # This node accepts a images for features like FLUX Fill, ControlNet, and Kontext, but needs to operate on them in
+    # latent space. We'll run the VAE to encode them in this node instead of requiring the user to run the VAE in
+    # upstream nodes.
 
     ip_adapter: IPAdapterField | list[IPAdapterField] | None = InputField(
         description=FieldDescriptions.ip_adapter, title="IP-Adapter", default=None, input=Input.Connection
+    )
+
+    kontext_conditioning: FluxKontextConditioningField | list[FluxKontextConditioningField] | None = InputField(
+        default=None,
+        description="FLUX Kontext conditioning (reference image).",
+        input=Input.Connection,
+    )
+
+    # DyPE (Dynamic Position Extrapolation) for high-resolution generation
+    dype_preset: DyPEPreset = InputField(
+        default=DYPE_PRESET_OFF,
+        description="DyPE preset for high-resolution generation. 'auto' enables automatically for resolutions > 1536px. '4k' uses optimized settings for 4K output.",
+        ui_order=100,
+        ui_choice_labels=DYPE_PRESET_LABELS,
+    )
+    dype_scale: Optional[float] = InputField(
+        default=None,
+        ge=0.0,
+        le=8.0,
+        description="DyPE magnitude (λs). Higher values = stronger extrapolation. Only used when dype_preset is not 'off'.",
+        ui_order=101,
+    )
+    dype_exponent: Optional[float] = InputField(
+        default=None,
+        ge=0.0,
+        le=1000.0,
+        description="DyPE decay speed (λt). Controls transition from low to high frequency detail. Only used when dype_preset is not 'off'.",
+        ui_order=102,
     )
 
     @torch.no_grad()
@@ -223,7 +268,14 @@ class FluxDenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
         )
 
         transformer_config = context.models.get_config(self.transformer.transformer)
-        is_schnell = "schnell" in getattr(transformer_config, "config_path", "")
+        assert (
+            transformer_config.base in (BaseModelType.Flux, BaseModelType.Flux2)
+            and transformer_config.type is ModelType.Main
+        )
+        # Schnell is only for FLUX.1, FLUX.2 Klein behaves like Dev (with guidance)
+        is_schnell = (
+            transformer_config.base is BaseModelType.Flux and transformer_config.variant is FluxVariantType.Schnell
+        )
 
         # Calculate the timestep schedule.
         timesteps = get_schedule(
@@ -231,6 +283,12 @@ class FluxDenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
             image_seq_len=packed_h * packed_w,
             shift=not is_schnell,
         )
+
+        # Create scheduler if not using default euler
+        scheduler = None
+        if self.scheduler in FLUX_SCHEDULER_MAP:
+            scheduler_class = FLUX_SCHEDULER_MAP[self.scheduler]
+            scheduler = scheduler_class(num_train_timesteps=1000)
 
         # Clip the timesteps schedule based on denoising_start and denoising_end.
         timesteps = clip_timestep_schedule_fractional(timesteps, self.denoising_start, self.denoising_end)
@@ -268,7 +326,7 @@ class FluxDenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
 
         # Prepare the extra image conditioning tensor (img_cond) for either FLUX structural control or FLUX Fill.
         img_cond: torch.Tensor | None = None
-        is_flux_fill = transformer_config.variant == ModelVariantType.Inpaint  # type: ignore
+        is_flux_fill = transformer_config.variant is FluxVariantType.DevFill
         if is_flux_fill:
             img_cond = self._prep_flux_fill_img_cond(
                 context, device=TorchDevice.choose_torch_device(), dtype=inference_dtype
@@ -318,6 +376,21 @@ class FluxDenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
             cfg_scale_start_step=self.cfg_scale_start_step,
             cfg_scale_end_step=self.cfg_scale_end_step,
         )
+
+        kontext_extension = None
+        if self.kontext_conditioning:
+            if not self.controlnet_vae:
+                raise ValueError("A VAE (e.g., controlnet_vae) must be provided to use Kontext conditioning.")
+
+            kontext_extension = KontextExtension(
+                context=context,
+                kontext_conditioning=self.kontext_conditioning
+                if isinstance(self.kontext_conditioning, list)
+                else [self.kontext_conditioning],
+                vae_field=self.controlnet_vae,
+                device=TorchDevice.choose_torch_device(),
+                dtype=inference_dtype,
+            )
 
         with ExitStack() as exit_stack:
             # Prepare ControlNet extensions.
@@ -376,6 +449,38 @@ class FluxDenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
                 dtype=inference_dtype,
             )
 
+            # Prepare Kontext conditioning if provided
+            img_cond_seq = None
+            img_cond_seq_ids = None
+            if kontext_extension is not None:
+                # Ensure batch sizes match
+                kontext_extension.ensure_batch_size(x.shape[0])
+                img_cond_seq, img_cond_seq_ids = kontext_extension.kontext_latents, kontext_extension.kontext_ids
+
+            # Prepare DyPE extension for high-resolution generation
+            dype_extension: DyPEExtension | None = None
+            dype_config = get_dype_config_from_preset(
+                preset=self.dype_preset,
+                width=self.width,
+                height=self.height,
+                custom_scale=self.dype_scale,
+                custom_exponent=self.dype_exponent,
+            )
+            if dype_config is not None:
+                dype_extension = DyPEExtension(
+                    config=dype_config,
+                    target_height=self.height,
+                    target_width=self.width,
+                )
+                context.logger.info(
+                    f"DyPE enabled: resolution={self.width}x{self.height}, preset={self.dype_preset}, "
+                    f"method={dype_config.method}, scale={dype_config.dype_scale:.2f}, "
+                    f"exponent={dype_config.dype_exponent:.2f}, start_sigma={dype_config.dype_start_sigma:.2f}, "
+                    f"base_resolution={dype_config.base_resolution}"
+                )
+            else:
+                context.logger.debug(f"DyPE disabled: resolution={self.width}x{self.height}, preset={self.dype_preset}")
+
             x = denoise(
                 model=transformer,
                 img=x,
@@ -391,6 +496,10 @@ class FluxDenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
                 pos_ip_adapter_extensions=pos_ip_adapter_extensions,
                 neg_ip_adapter_extensions=neg_ip_adapter_extensions,
                 img_cond=img_cond,
+                img_cond_seq=img_cond_seq,
+                img_cond_seq_ids=img_cond_seq_ids,
+                dype_extension=dype_extension,
+                scheduler=scheduler,
             )
 
         x = unpack(x.float(), self.height, self.width)
@@ -865,7 +974,10 @@ class FluxDenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
 
     def _build_step_callback(self, context: InvocationContext) -> Callable[[PipelineIntermediateState], None]:
         def step_callback(state: PipelineIntermediateState) -> None:
-            state.latents = unpack(state.latents.float(), self.height, self.width).squeeze()
+            # The denoise function now handles Kontext conditioning correctly,
+            # so we don't need to slice the latents here
+            latents = state.latents.float()
+            state.latents = unpack(latents, self.height, self.width).squeeze()
             context.util.flux_step_callback(state)
 
         return step_callback

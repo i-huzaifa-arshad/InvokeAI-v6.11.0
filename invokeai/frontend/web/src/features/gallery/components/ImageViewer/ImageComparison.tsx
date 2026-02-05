@@ -1,42 +1,88 @@
+import { Box, Divider, Flex } from '@invoke-ai/ui-library';
 import { useAppSelector } from 'app/store/storeHooks';
-import { IAINoContentFallback } from 'common/components/IAIImageFallback';
-import type { Dimensions } from 'features/controlLayers/store/types';
-import { selectComparisonImages } from 'features/gallery/components/ImageViewer/common';
+import { debounce } from 'es-toolkit';
+import type { ComparisonWrapperProps } from 'features/gallery/components/ImageViewer/common';
+import { selectImageToCompare } from 'features/gallery/components/ImageViewer/common';
+import { CompareToolbar } from 'features/gallery/components/ImageViewer/CompareToolbar';
+import { ImageComparisonDroppable } from 'features/gallery/components/ImageViewer/ImageComparisonDroppable';
 import { ImageComparisonHover } from 'features/gallery/components/ImageViewer/ImageComparisonHover';
 import { ImageComparisonSideBySide } from 'features/gallery/components/ImageViewer/ImageComparisonSideBySide';
 import { ImageComparisonSlider } from 'features/gallery/components/ImageViewer/ImageComparisonSlider';
-import { selectComparisonMode } from 'features/gallery/store/gallerySelectors';
-import { memo } from 'react';
-import { useTranslation } from 'react-i18next';
-import { PiImagesBold } from 'react-icons/pi';
+import { selectComparisonMode, selectLastSelectedItem } from 'features/gallery/store/gallerySelectors';
+import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useImageDTO } from 'services/api/endpoints/images';
+import type { Equals } from 'tsafe';
+import { assert } from 'tsafe';
 
-type Props = {
-  containerDims: Dimensions;
-};
-
-export const ImageComparison = memo(({ containerDims }: Props) => {
-  const { t } = useTranslation();
+const ImageComparisonContent = memo(({ firstImage, secondImage, rect }: ComparisonWrapperProps) => {
   const comparisonMode = useAppSelector(selectComparisonMode);
-  const { firstImage, secondImage } = useAppSelector(selectComparisonImages);
 
   if (!firstImage || !secondImage) {
-    // Should rarely/never happen - we don't render this component unless we have images to compare
-    return <IAINoContentFallback label={t('gallery.selectAnImageToCompare')} icon={PiImagesBold} />;
+    return null;
   }
 
   if (comparisonMode === 'slider') {
-    return <ImageComparisonSlider containerDims={containerDims} firstImage={firstImage} secondImage={secondImage} />;
+    return <ImageComparisonSlider firstImage={firstImage} secondImage={secondImage} rect={rect} />;
   }
 
   if (comparisonMode === 'side-by-side') {
-    return (
-      <ImageComparisonSideBySide containerDims={containerDims} firstImage={firstImage} secondImage={secondImage} />
-    );
+    return <ImageComparisonSideBySide firstImage={firstImage} secondImage={secondImage} rect={rect} />;
   }
 
   if (comparisonMode === 'hover') {
-    return <ImageComparisonHover containerDims={containerDims} firstImage={firstImage} secondImage={secondImage} />;
+    return <ImageComparisonHover firstImage={firstImage} secondImage={secondImage} rect={rect} />;
   }
+
+  assert<Equals<never, typeof comparisonMode>>(false);
 });
 
+ImageComparisonContent.displayName = 'ImageComparisonContent';
+
+export const ImageComparison = memo(() => {
+  const lastSelectedItem = useAppSelector(selectLastSelectedItem);
+  const lastSelectedImageDTO = useImageDTO(lastSelectedItem);
+  const comparisonImageDTO = useImageDTO(useAppSelector(selectImageToCompare));
+
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  // Ref callback runs synchronously when the DOM node is attached, ensuring we have a measurement before
+  // the comparison content is rendered.
+  const measureNode = useCallback((node: HTMLDivElement) => {
+    if (node) {
+      ref.current = node;
+      const boundingRect = node.getBoundingClientRect();
+      setRect(boundingRect);
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) {
+      return;
+    }
+    const measureRect = debounce(() => {
+      const boundingRect = el.getBoundingClientRect();
+      setRect(boundingRect);
+    }, 300);
+    const observer = new ResizeObserver(measureRect);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  return (
+    <Flex flexDir="column" w="full" h="full" overflow="hidden" gap={2} position="relative">
+      <CompareToolbar />
+      <Divider />
+      <Flex w="full" h="full" position="relative">
+        <Box ref={measureNode} w="full" h="full" overflow="hidden">
+          <ImageComparisonContent firstImage={lastSelectedImageDTO} secondImage={comparisonImageDTO} rect={rect} />
+        </Box>
+        <ImageComparisonDroppable />
+      </Flex>
+    </Flex>
+  );
+});
 ImageComparison.displayName = 'ImageComparison';

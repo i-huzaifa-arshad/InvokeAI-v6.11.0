@@ -1,59 +1,85 @@
-import { useNodeData } from 'features/nodes/hooks/useNodeData';
+import { createSelector } from '@reduxjs/toolkit';
+import { useAppSelector } from 'app/store/storeHooks';
+import { isNil } from 'es-toolkit/compat';
+import { useInvocationNodeContext } from 'features/nodes/components/flow/nodes/Invocation/context';
 import type { FieldInputTemplate } from 'features/nodes/types/field';
-import { isSingleOrCollection } from 'features/nodes/types/field';
-import { TEMPLATE_BUILDER_MAP } from 'features/nodes/util/schema/buildFieldInputTemplate';
+import { isSingleOrCollection, isStatefulFieldType } from 'features/nodes/types/field';
 import { useMemo } from 'react';
 
-import { useNodeTemplateOrThrow } from './useNodeTemplateOrThrow';
+/**
+ * Sort input fields: unordered fields first (preserving original order),
+ * then explicitly ordered fields sorted by ui_order ascending.
+ */
+const sortInputFields = (fields: FieldInputTemplate[]): string[] => {
+  const visibleFields = fields.filter((field) => !field.ui_hidden);
+
+  const unorderedFields = visibleFields.filter((f) => isNil(f.ui_order));
+  const orderedFields = visibleFields
+    .filter((f) => !isNil(f.ui_order))
+    .sort((a, b) => (a.ui_order ?? 0) - (b.ui_order ?? 0));
+
+  return unorderedFields
+    .concat(orderedFields)
+    .map((f) => f.name)
+    .filter((fieldName) => fieldName !== 'is_intermediate');
+};
 
 const isConnectionInputField = (field: FieldInputTemplate) => {
-  return (
-    (field.input === 'connection' && !isSingleOrCollection(field.type)) || !(field.type.name in TEMPLATE_BUILDER_MAP)
-  );
+  return (field.input === 'connection' && !isSingleOrCollection(field.type)) || !isStatefulFieldType(field.type);
 };
 
 const isAnyOrDirectInputField = (field: FieldInputTemplate) => {
   return (
-    (['any', 'direct'].includes(field.input) || isSingleOrCollection(field.type)) &&
-    field.type.name in TEMPLATE_BUILDER_MAP
+    (['any', 'direct'].includes(field.input) || isSingleOrCollection(field.type)) && isStatefulFieldType(field.type)
   );
 };
 
-export const useInputFieldNamesMissing = (nodeId: string) => {
-  const template = useNodeTemplateOrThrow(nodeId);
-  const node = useNodeData(nodeId);
-  const fieldNames = useMemo(() => {
-    const instanceFields = new Set(Object.keys(node.inputs));
-    const allTemplateFields = new Set(Object.keys(template.inputs));
-    return Array.from(instanceFields.difference(allTemplateFields));
-  }, [node.inputs, template.inputs]);
-  return fieldNames;
+export const useInputFieldNamesMissing = () => {
+  const ctx = useInvocationNodeContext();
+  const selector = useMemo(
+    () =>
+      createSelector([ctx.selectNodeInputsOrThrow, ctx.selectNodeTemplateSafe], (inputs, template) => {
+        const instanceFieldNames = new Set(Object.keys(inputs));
+        const templateFieldNames = new Set(Object.keys(template?.inputs ?? {}));
+        return Array.from(instanceFieldNames.difference(templateFieldNames));
+      }),
+    [ctx]
+  );
+  return useAppSelector(selector);
 };
 
-export const useInputFieldNamesAnyOrDirect = (nodeId: string) => {
-  const template = useNodeTemplateOrThrow(nodeId);
-  const fieldNames = useMemo(() => {
-    const anyOrDirectFields: string[] = [];
-    for (const [fieldName, fieldTemplate] of Object.entries(template.inputs)) {
-      if (isAnyOrDirectInputField(fieldTemplate)) {
-        anyOrDirectFields.push(fieldName);
-      }
-    }
-    return anyOrDirectFields;
-  }, [template.inputs]);
-  return fieldNames;
+export const useInputFieldNamesAnyOrDirect = () => {
+  const ctx = useInvocationNodeContext();
+  const selector = useMemo(
+    () =>
+      createSelector([ctx.selectNodeTemplateSafe], (template) => {
+        const fields: FieldInputTemplate[] = [];
+        for (const fieldTemplate of Object.values(template?.inputs ?? {})) {
+          if (isAnyOrDirectInputField(fieldTemplate)) {
+            fields.push(fieldTemplate);
+          }
+        }
+        return sortInputFields(fields);
+      }),
+    [ctx]
+  );
+  return useAppSelector(selector);
 };
 
-export const useInputFieldNamesConnection = (nodeId: string) => {
-  const template = useNodeTemplateOrThrow(nodeId);
-  const fieldNames = useMemo(() => {
-    const connectionFields: string[] = [];
-    for (const [fieldName, fieldTemplate] of Object.entries(template.inputs)) {
-      if (isConnectionInputField(fieldTemplate)) {
-        connectionFields.push(fieldName);
-      }
-    }
-    return connectionFields;
-  }, [template.inputs]);
-  return fieldNames;
+export const useInputFieldNamesConnection = () => {
+  const ctx = useInvocationNodeContext();
+  const selector = useMemo(
+    () =>
+      createSelector([ctx.selectNodeTemplateSafe], (template) => {
+        const fields: FieldInputTemplate[] = [];
+        for (const fieldTemplate of Object.values(template?.inputs ?? {})) {
+          if (isConnectionInputField(fieldTemplate)) {
+            fields.push(fieldTemplate);
+          }
+        }
+        return sortInputFields(fields);
+      }),
+    [ctx]
+  );
+  return useAppSelector(selector);
 };

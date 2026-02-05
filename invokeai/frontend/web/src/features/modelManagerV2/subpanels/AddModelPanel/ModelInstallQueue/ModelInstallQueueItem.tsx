@@ -1,7 +1,7 @@
 import { Flex, IconButton, Progress, Text, Tooltip } from '@invoke-ai/ui-library';
+import { isNil } from 'es-toolkit/compat';
 import { toast } from 'features/toast/toast';
 import { t } from 'i18next';
-import { isNil } from 'lodash-es';
 import { memo, useCallback, useMemo } from 'react';
 import { PiXBold } from 'react-icons/pi';
 import { useCancelModelInstallMutation } from 'services/api/endpoints/models';
@@ -66,8 +66,13 @@ export const ModelInstallQueueItem = memo((props: ModelListItemProps) => {
 
   const modelName = useMemo(() => {
     switch (installJob.source.type) {
-      case 'hf':
-        return installJob.source.repo_id;
+      case 'hf': {
+        const { repo_id, subfolder } = installJob.source;
+        if (subfolder) {
+          return `${repo_id}::${subfolder}`;
+        }
+        return repo_id;
+      }
       case 'url':
         return installJob.source.url.split('/').slice(-1)[0] ?? t('common.unknown');
       case 'local':

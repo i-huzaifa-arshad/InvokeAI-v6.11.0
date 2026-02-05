@@ -1,8 +1,25 @@
 import type { PayloadAction, Selector } from '@reduxjs/toolkit';
 import { createSelector, createSlice } from '@reduxjs/toolkit';
-import type { PersistConfig, RootState } from 'app/store/store';
+import type { RootState } from 'app/store/store';
+import type { SliceConfig } from 'app/store/types';
 import { deepClone } from 'common/util/deepClone';
-import type { RgbaColor } from 'features/controlLayers/store/types';
+import { roundDownToMultiple, roundToMultiple } from 'common/util/roundDownToMultiple';
+import { isPlainObject } from 'es-toolkit';
+import { clamp } from 'es-toolkit/compat';
+import type { AspectRatioID, InfillMethod, ParamsState, RgbaColor } from 'features/controlLayers/store/types';
+import {
+  ASPECT_RATIO_MAP,
+  DEFAULT_ASPECT_RATIO_CONFIG,
+  getInitialParamsState,
+  MAX_POSITIVE_PROMPT_HISTORY,
+  zParamsState,
+} from 'features/controlLayers/store/types';
+import { calculateNewSize } from 'features/controlLayers/util/getScaledBoundingBoxDimensions';
+import {
+  SUPPORTS_NEGATIVE_PROMPT_BASE_MODELS,
+  SUPPORTS_OPTIMIZED_DENOISING_BASE_MODELS,
+  SUPPORTS_REF_IMAGES_BASE_MODELS,
+} from 'features/modelManagerV2/models';
 import { CLIP_SKIP_MAP } from 'features/parameters/types/constants';
 import type {
   ParameterCanvasCoherenceMode,
@@ -13,126 +30,23 @@ import type {
   ParameterCLIPLEmbedModel,
   ParameterControlLoRAModel,
   ParameterGuidance,
-  ParameterMaskBlurMethod,
   ParameterModel,
   ParameterNegativePrompt,
-  ParameterNegativeStylePromptSDXL,
   ParameterPositivePrompt,
-  ParameterPositiveStylePromptSDXL,
   ParameterPrecision,
   ParameterScheduler,
   ParameterSDXLRefinerModel,
-  ParameterSeed,
-  ParameterSteps,
-  ParameterStrength,
   ParameterT5EncoderModel,
   ParameterVAEModel,
 } from 'features/parameters/types/parameterSchemas';
-import { clamp } from 'lodash-es';
+import { getGridSize, getIsSizeOptimal, getOptimalDimension } from 'features/parameters/util/optimalDimension';
+import { modelConfigsAdapterSelectors, selectModelConfigsQuery } from 'services/api/endpoints/models';
+import { isNonRefinerMainModelConfig } from 'services/api/types';
+import { assert } from 'tsafe';
 
-import { newSessionRequested } from './actions';
-
-export type ParamsState = {
-  maskBlur: number;
-  maskBlurMethod: ParameterMaskBlurMethod;
-  canvasCoherenceMode: ParameterCanvasCoherenceMode;
-  canvasCoherenceMinDenoise: ParameterStrength;
-  canvasCoherenceEdgeSize: number;
-  infillMethod: string;
-  infillTileSize: number;
-  infillPatchmatchDownscaleSize: number;
-  infillColorValue: RgbaColor;
-  cfgScale: ParameterCFGScale;
-  cfgRescaleMultiplier: ParameterCFGRescaleMultiplier;
-  guidance: ParameterGuidance;
-  img2imgStrength: ParameterStrength;
-  optimizedDenoisingEnabled: boolean;
-  iterations: number;
-  scheduler: ParameterScheduler;
-  upscaleScheduler: ParameterScheduler;
-  upscaleCfgScale: ParameterCFGScale;
-  seed: ParameterSeed;
-  shouldRandomizeSeed: boolean;
-  steps: ParameterSteps;
-  model: ParameterModel | null;
-  vae: ParameterVAEModel | null;
-  vaePrecision: ParameterPrecision;
-  fluxVAE: ParameterVAEModel | null;
-  seamlessXAxis: boolean;
-  seamlessYAxis: boolean;
-  clipSkip: number;
-  shouldUseCpuNoise: boolean;
-  positivePrompt: ParameterPositivePrompt;
-  negativePrompt: ParameterNegativePrompt;
-  positivePrompt2: ParameterPositiveStylePromptSDXL;
-  negativePrompt2: ParameterNegativeStylePromptSDXL;
-  shouldConcatPrompts: boolean;
-  refinerModel: ParameterSDXLRefinerModel | null;
-  refinerSteps: number;
-  refinerCFGScale: number;
-  refinerScheduler: ParameterScheduler;
-  refinerPositiveAestheticScore: number;
-  refinerNegativeAestheticScore: number;
-  refinerStart: number;
-  t5EncoderModel: ParameterT5EncoderModel | null;
-  clipEmbedModel: ParameterCLIPEmbedModel | null;
-  clipLEmbedModel: ParameterCLIPLEmbedModel | null;
-  clipGEmbedModel: ParameterCLIPGEmbedModel | null;
-  controlLora: ParameterControlLoRAModel | null;
-};
-
-const initialState: ParamsState = {
-  maskBlur: 16,
-  maskBlurMethod: 'box',
-  canvasCoherenceMode: 'Gaussian Blur',
-  canvasCoherenceMinDenoise: 0,
-  canvasCoherenceEdgeSize: 16,
-  infillMethod: 'lama',
-  infillTileSize: 32,
-  infillPatchmatchDownscaleSize: 1,
-  infillColorValue: { r: 0, g: 0, b: 0, a: 1 },
-  cfgScale: 7.5,
-  cfgRescaleMultiplier: 0,
-  guidance: 4,
-  img2imgStrength: 0.75,
-  optimizedDenoisingEnabled: true,
-  iterations: 1,
-  scheduler: 'dpmpp_3m_k',
-  upscaleScheduler: 'kdpm_2',
-  upscaleCfgScale: 2,
-  seed: 0,
-  shouldRandomizeSeed: true,
-  steps: 30,
-  model: null,
-  vae: null,
-  fluxVAE: null,
-  vaePrecision: 'fp32',
-  seamlessXAxis: false,
-  seamlessYAxis: false,
-  clipSkip: 0,
-  shouldUseCpuNoise: true,
-  positivePrompt: '',
-  negativePrompt: '',
-  positivePrompt2: '',
-  negativePrompt2: '',
-  shouldConcatPrompts: true,
-  refinerModel: null,
-  refinerSteps: 20,
-  refinerCFGScale: 7.5,
-  refinerScheduler: 'euler',
-  refinerPositiveAestheticScore: 6,
-  refinerNegativeAestheticScore: 2.5,
-  refinerStart: 0.8,
-  t5EncoderModel: null,
-  clipEmbedModel: null,
-  clipLEmbedModel: null,
-  clipGEmbedModel: null,
-  controlLora: null,
-};
-
-export const paramsSlice = createSlice({
+const slice = createSlice({
   name: 'params',
-  initialState,
+  initialState: getInitialParamsState(),
   reducers: {
     setIterations: (state, action: PayloadAction<number>) => {
       state.iterations = action.payload;
@@ -154,6 +68,30 @@ export const paramsSlice = createSlice({
     },
     setScheduler: (state, action: PayloadAction<ParameterScheduler>) => {
       state.scheduler = action.payload;
+    },
+    setFluxScheduler: (state, action: PayloadAction<'euler' | 'heun' | 'lcm'>) => {
+      state.fluxScheduler = action.payload;
+    },
+    setFluxDypePreset: (state, action: PayloadAction<'off' | 'manual' | 'auto' | '4k'>) => {
+      state.fluxDypePreset = action.payload;
+    },
+    setFluxDypeScale: (state, action: PayloadAction<number>) => {
+      state.fluxDypeScale = action.payload;
+    },
+    setFluxDypeExponent: (state, action: PayloadAction<number>) => {
+      state.fluxDypeExponent = action.payload;
+    },
+    setZImageScheduler: (state, action: PayloadAction<'euler' | 'heun' | 'lcm'>) => {
+      state.zImageScheduler = action.payload;
+    },
+    setZImageSeedVarianceEnabled: (state, action: PayloadAction<boolean>) => {
+      state.zImageSeedVarianceEnabled = action.payload;
+    },
+    setZImageSeedVarianceStrength: (state, action: PayloadAction<number>) => {
+      state.zImageSeedVarianceStrength = action.payload;
+    },
+    setZImageSeedVarianceRandomizePercent: (state, action: PayloadAction<number>) => {
+      state.zImageSeedVarianceRandomizePercent = action.payload;
     },
     setUpscaleScheduler: (state, action: PayloadAction<ParameterScheduler>) => {
       state.upscaleScheduler = action.payload;
@@ -182,7 +120,12 @@ export const paramsSlice = createSlice({
       state,
       action: PayloadAction<{ model: ParameterModel | null; previousModel?: ParameterModel | null }>
     ) => {
-      const { model, previousModel } = action.payload;
+      const { previousModel } = action.payload;
+      const result = zParamsState.shape.model.safeParse(action.payload.model);
+      if (!result.success) {
+        return;
+      }
+      const model = result.data;
       state.model = model;
 
       // If the model base changes (e.g. SD1.5 -> SDXL), we need to change a few things
@@ -190,63 +133,141 @@ export const paramsSlice = createSlice({
         return;
       }
 
-      // Clamp CLIP skip layer count to the bounds of the new model
-      if (model.base === 'sdxl') {
-        // We don't support user-defined CLIP skip for SDXL because it doesn't do anything useful
-        state.clipSkip = 0;
-      } else {
-        const { maxClip } = CLIP_SKIP_MAP[model.base];
-        state.clipSkip = clamp(state.clipSkip, 0, maxClip);
-      }
+      applyClipSkip(state, model, state.clipSkip);
     },
     vaeSelected: (state, action: PayloadAction<ParameterVAEModel | null>) => {
       // null is a valid VAE!
-      state.vae = action.payload;
+      const result = zParamsState.shape.vae.safeParse(action.payload);
+      if (!result.success) {
+        return;
+      }
+      state.vae = result.data;
     },
     fluxVAESelected: (state, action: PayloadAction<ParameterVAEModel | null>) => {
-      state.fluxVAE = action.payload;
+      const result = zParamsState.shape.fluxVAE.safeParse(action.payload);
+      if (!result.success) {
+        return;
+      }
+      state.fluxVAE = result.data;
     },
     t5EncoderModelSelected: (state, action: PayloadAction<ParameterT5EncoderModel | null>) => {
-      state.t5EncoderModel = action.payload;
+      const result = zParamsState.shape.t5EncoderModel.safeParse(action.payload);
+      if (!result.success) {
+        return;
+      }
+      state.t5EncoderModel = result.data;
     },
     controlLoRAModelSelected: (state, action: PayloadAction<ParameterControlLoRAModel | null>) => {
-      state.controlLora = action.payload;
+      const result = zParamsState.shape.controlLora.safeParse(action.payload);
+      if (!result.success) {
+        return;
+      }
+      state.controlLora = result.data;
     },
     clipEmbedModelSelected: (state, action: PayloadAction<ParameterCLIPEmbedModel | null>) => {
-      state.clipEmbedModel = action.payload;
+      const result = zParamsState.shape.clipEmbedModel.safeParse(action.payload);
+      if (!result.success) {
+        return;
+      }
+      state.clipEmbedModel = result.data;
     },
     clipLEmbedModelSelected: (state, action: PayloadAction<ParameterCLIPLEmbedModel | null>) => {
-      state.clipLEmbedModel = action.payload;
+      const result = zParamsState.shape.clipLEmbedModel.safeParse(action.payload);
+      if (!result.success) {
+        return;
+      }
+      state.clipLEmbedModel = result.data;
     },
     clipGEmbedModelSelected: (state, action: PayloadAction<ParameterCLIPGEmbedModel | null>) => {
-      state.clipGEmbedModel = action.payload;
+      const result = zParamsState.shape.clipGEmbedModel.safeParse(action.payload);
+      if (!result.success) {
+        return;
+      }
+      state.clipGEmbedModel = result.data;
+    },
+    zImageVaeModelSelected: (state, action: PayloadAction<ParameterVAEModel | null>) => {
+      const result = zParamsState.shape.zImageVaeModel.safeParse(action.payload);
+      if (!result.success) {
+        return;
+      }
+      state.zImageVaeModel = result.data;
+    },
+    zImageQwen3EncoderModelSelected: (
+      state,
+      action: PayloadAction<{ key: string; name: string; base: string } | null>
+    ) => {
+      const result = zParamsState.shape.zImageQwen3EncoderModel.safeParse(action.payload);
+      if (!result.success) {
+        return;
+      }
+      state.zImageQwen3EncoderModel = result.data;
+    },
+    zImageQwen3SourceModelSelected: (state, action: PayloadAction<ParameterModel | null>) => {
+      const result = zParamsState.shape.zImageQwen3SourceModel.safeParse(action.payload);
+      if (!result.success) {
+        return;
+      }
+      state.zImageQwen3SourceModel = result.data;
+    },
+    kleinVaeModelSelected: (state, action: PayloadAction<ParameterVAEModel | null>) => {
+      const result = zParamsState.shape.kleinVaeModel.safeParse(action.payload);
+      if (!result.success) {
+        return;
+      }
+      state.kleinVaeModel = result.data;
+    },
+    kleinQwen3EncoderModelSelected: (
+      state,
+      action: PayloadAction<{ key: string; name: string; base: string } | null>
+    ) => {
+      const result = zParamsState.shape.kleinQwen3EncoderModel.safeParse(action.payload);
+      if (!result.success) {
+        return;
+      }
+      state.kleinQwen3EncoderModel = result.data;
     },
     vaePrecisionChanged: (state, action: PayloadAction<ParameterPrecision>) => {
       state.vaePrecision = action.payload;
     },
     setClipSkip: (state, action: PayloadAction<number>) => {
-      state.clipSkip = action.payload;
+      applyClipSkip(state, state.model, action.payload);
     },
     shouldUseCpuNoiseChanged: (state, action: PayloadAction<boolean>) => {
       state.shouldUseCpuNoise = action.payload;
     },
-    positivePromptChanged: (state, action: PayloadAction<string>) => {
+    setColorCompensation: (state, action: PayloadAction<boolean>) => {
+      state.colorCompensation = action.payload;
+    },
+    positivePromptChanged: (state, action: PayloadAction<ParameterPositivePrompt>) => {
       state.positivePrompt = action.payload;
     },
-    negativePromptChanged: (state, action: PayloadAction<string>) => {
+    positivePromptAddedToHistory: (state, action: PayloadAction<ParameterPositivePrompt>) => {
+      const prompt = action.payload.trim();
+      if (prompt.length === 0) {
+        return;
+      }
+
+      state.positivePromptHistory = [prompt, ...state.positivePromptHistory.filter((p) => p !== prompt)];
+
+      if (state.positivePromptHistory.length > MAX_POSITIVE_PROMPT_HISTORY) {
+        state.positivePromptHistory = state.positivePromptHistory.slice(0, MAX_POSITIVE_PROMPT_HISTORY);
+      }
+    },
+    promptRemovedFromHistory: (state, action: PayloadAction<string>) => {
+      state.positivePromptHistory = state.positivePromptHistory.filter((p) => p !== action.payload);
+    },
+    promptHistoryCleared: (state) => {
+      state.positivePromptHistory = [];
+    },
+    negativePromptChanged: (state, action: PayloadAction<ParameterNegativePrompt>) => {
       state.negativePrompt = action.payload;
     },
-    positivePrompt2Changed: (state, action: PayloadAction<string>) => {
-      state.positivePrompt2 = action.payload;
-    },
-    negativePrompt2Changed: (state, action: PayloadAction<string>) => {
-      state.negativePrompt2 = action.payload;
-    },
-    shouldConcatPromptsChanged: (state, action: PayloadAction<boolean>) => {
-      state.shouldConcatPrompts = action.payload;
-    },
     refinerModelChanged: (state, action: PayloadAction<ParameterSDXLRefinerModel | null>) => {
-      state.refinerModel = action.payload;
+      const result = zParamsState.shape.refinerModel.safeParse(action.payload);
+      if (!result.success) {
+        return;
+      }
+      state.refinerModel = result.data;
     },
     setRefinerSteps: (state, action: PayloadAction<number>) => {
       state.refinerSteps = action.payload;
@@ -266,7 +287,7 @@ export const paramsSlice = createSlice({
     setRefinerStart: (state, action: PayloadAction<number>) => {
       state.refinerStart = action.payload;
     },
-    setInfillMethod: (state, action: PayloadAction<string>) => {
+    setInfillMethod: (state, action: PayloadAction<InfillMethod>) => {
       state.infillMethod = action.payload;
     },
     setInfillTileSize: (state, action: PayloadAction<number>) => {
@@ -290,24 +311,169 @@ export const paramsSlice = createSlice({
     setCanvasCoherenceMinDenoise: (state, action: PayloadAction<number>) => {
       state.canvasCoherenceMinDenoise = action.payload;
     },
+
+    //#region Dimensions
+    sizeRecalled: (state, action: PayloadAction<{ width: number; height: number }>) => {
+      const { width, height } = action.payload;
+      const gridSize = getGridSize(state.model?.base);
+      state.dimensions.width = Math.max(roundDownToMultiple(width, gridSize), 64);
+      state.dimensions.height = Math.max(roundDownToMultiple(height, gridSize), 64);
+      state.dimensions.aspectRatio.value = state.dimensions.width / state.dimensions.height;
+      state.dimensions.aspectRatio.id = 'Free';
+      state.dimensions.aspectRatio.isLocked = true;
+    },
+    widthChanged: (state, action: PayloadAction<{ width: number; updateAspectRatio?: boolean; clamp?: boolean }>) => {
+      const { width, updateAspectRatio, clamp } = action.payload;
+      const gridSize = getGridSize(state.model?.base);
+      state.dimensions.width = clamp ? Math.max(roundDownToMultiple(width, gridSize), 64) : width;
+
+      if (state.dimensions.aspectRatio.isLocked) {
+        state.dimensions.height = roundToMultiple(
+          state.dimensions.width / state.dimensions.aspectRatio.value,
+          gridSize
+        );
+      }
+
+      if (updateAspectRatio || !state.dimensions.aspectRatio.isLocked) {
+        state.dimensions.aspectRatio.value = state.dimensions.width / state.dimensions.height;
+        state.dimensions.aspectRatio.id = 'Free';
+        state.dimensions.aspectRatio.isLocked = false;
+      }
+    },
+    heightChanged: (state, action: PayloadAction<{ height: number; updateAspectRatio?: boolean; clamp?: boolean }>) => {
+      const { height, updateAspectRatio, clamp } = action.payload;
+      const gridSize = getGridSize(state.model?.base);
+      state.dimensions.height = clamp ? Math.max(roundDownToMultiple(height, gridSize), 64) : height;
+
+      if (state.dimensions.aspectRatio.isLocked) {
+        state.dimensions.width = roundToMultiple(
+          state.dimensions.height * state.dimensions.aspectRatio.value,
+          gridSize
+        );
+      }
+
+      if (updateAspectRatio || !state.dimensions.aspectRatio.isLocked) {
+        state.dimensions.aspectRatio.value = state.dimensions.width / state.dimensions.height;
+        state.dimensions.aspectRatio.id = 'Free';
+        state.dimensions.aspectRatio.isLocked = false;
+      }
+    },
+    aspectRatioLockToggled: (state) => {
+      state.dimensions.aspectRatio.isLocked = !state.dimensions.aspectRatio.isLocked;
+    },
+    aspectRatioIdChanged: (state, action: PayloadAction<{ id: AspectRatioID }>) => {
+      const { id } = action.payload;
+      state.dimensions.aspectRatio.id = id;
+      if (id === 'Free') {
+        state.dimensions.aspectRatio.isLocked = false;
+      } else {
+        state.dimensions.aspectRatio.isLocked = true;
+        state.dimensions.aspectRatio.value = ASPECT_RATIO_MAP[id].ratio;
+        const { width, height } = calculateNewSize(
+          state.dimensions.aspectRatio.value,
+          state.dimensions.width * state.dimensions.height,
+          state.model?.base
+        );
+        state.dimensions.width = width;
+        state.dimensions.height = height;
+      }
+    },
+    dimensionsSwapped: (state) => {
+      state.dimensions.aspectRatio.value = 1 / state.dimensions.aspectRatio.value;
+      if (state.dimensions.aspectRatio.id === 'Free') {
+        const newWidth = state.dimensions.height;
+        const newHeight = state.dimensions.width;
+        state.dimensions.width = newWidth;
+        state.dimensions.height = newHeight;
+      } else {
+        const { width, height } = calculateNewSize(
+          state.dimensions.aspectRatio.value,
+          state.dimensions.width * state.dimensions.height,
+          state.model?.base
+        );
+        state.dimensions.width = width;
+        state.dimensions.height = height;
+        state.dimensions.aspectRatio.id = ASPECT_RATIO_MAP[state.dimensions.aspectRatio.id].inverseID;
+      }
+    },
+    sizeOptimized: (state) => {
+      const optimalDimension = getOptimalDimension(state.model?.base);
+      if (state.dimensions.aspectRatio.isLocked) {
+        const { width, height } = calculateNewSize(
+          state.dimensions.aspectRatio.value,
+          optimalDimension * optimalDimension,
+          state.model?.base
+        );
+        state.dimensions.width = width;
+        state.dimensions.height = height;
+      } else {
+        state.dimensions.aspectRatio = deepClone(DEFAULT_ASPECT_RATIO_CONFIG);
+        state.dimensions.width = optimalDimension;
+        state.dimensions.height = optimalDimension;
+      }
+    },
+    syncedToOptimalDimension: (state) => {
+      const optimalDimension = getOptimalDimension(state.model?.base);
+
+      if (!getIsSizeOptimal(state.dimensions.width, state.dimensions.height, state.model?.base)) {
+        const bboxDims = calculateNewSize(
+          state.dimensions.aspectRatio.value,
+          optimalDimension * optimalDimension,
+          state.model?.base
+        );
+        state.dimensions.width = bboxDims.width;
+        state.dimensions.height = bboxDims.height;
+      }
+    },
     paramsReset: (state) => resetState(state),
   },
-  extraReducers(builder) {
-    builder.addMatcher(newSessionRequested, (state) => resetState(state));
-  },
 });
+
+const applyClipSkip = (state: { clipSkip: number }, model: ParameterModel | null, clipSkip: number) => {
+  if (model === null) {
+    return;
+  }
+
+  const maxClip = getModelMaxClipSkip(model);
+
+  state.clipSkip = clamp(clipSkip, 0, maxClip ?? 0);
+};
+
+const hasModelClipSkip = (model: ParameterModel | null) => {
+  if (model === null) {
+    return false;
+  }
+
+  return getModelMaxClipSkip(model) ?? 0 > 0;
+};
+
+const getModelMaxClipSkip = (model: ParameterModel) => {
+  if (model.base === 'sdxl') {
+    // We don't support user-defined CLIP skip for SDXL because it doesn't do anything useful
+    return 0;
+  }
+
+  return CLIP_SKIP_MAP[model.base]?.maxClip;
+};
 
 const resetState = (state: ParamsState): ParamsState => {
   // When a new session is requested, we need to keep the current model selections, plus dependent state
   // like VAE precision. Everything else gets reset to default.
-  const newState = deepClone(initialState);
-  newState.model = state.model;
-  newState.vae = state.vae;
-  newState.fluxVAE = state.fluxVAE;
-  newState.vaePrecision = state.vaePrecision;
-  newState.t5EncoderModel = state.t5EncoderModel;
-  newState.clipEmbedModel = state.clipEmbedModel;
-  newState.refinerModel = state.refinerModel;
+  const oldState = deepClone(state);
+  const newState = getInitialParamsState();
+  newState.dimensions = oldState.dimensions;
+  newState.model = oldState.model;
+  newState.vae = oldState.vae;
+  newState.fluxVAE = oldState.fluxVAE;
+  newState.vaePrecision = oldState.vaePrecision;
+  newState.t5EncoderModel = oldState.t5EncoderModel;
+  newState.clipEmbedModel = oldState.clipEmbedModel;
+  newState.refinerModel = oldState.refinerModel;
+  newState.zImageVaeModel = oldState.zImageVaeModel;
+  newState.zImageQwen3EncoderModel = oldState.zImageQwen3EncoderModel;
+  newState.zImageQwen3SourceModel = oldState.zImageQwen3SourceModel;
+  newState.kleinVaeModel = oldState.kleinVaeModel;
+  newState.kleinQwen3EncoderModel = oldState.kleinQwen3EncoderModel;
   return newState;
 };
 
@@ -326,6 +492,14 @@ export const {
   setCfgRescaleMultiplier,
   setGuidance,
   setScheduler,
+  setFluxScheduler,
+  setFluxDypePreset,
+  setFluxDypeScale,
+  setFluxDypeExponent,
+  setZImageScheduler,
+  setZImageSeedVarianceEnabled,
+  setZImageSeedVarianceStrength,
+  setZImageSeedVarianceRandomizePercent,
   setUpscaleScheduler,
   setUpscaleCfgScale,
   setSeed,
@@ -341,13 +515,19 @@ export const {
   clipEmbedModelSelected,
   clipLEmbedModelSelected,
   clipGEmbedModelSelected,
+  zImageVaeModelSelected,
+  zImageQwen3EncoderModelSelected,
+  zImageQwen3SourceModelSelected,
+  kleinVaeModelSelected,
+  kleinQwen3EncoderModelSelected,
   setClipSkip,
   shouldUseCpuNoiseChanged,
+  setColorCompensation,
   positivePromptChanged,
+  positivePromptAddedToHistory,
+  promptRemovedFromHistory,
+  promptHistoryCleared,
   negativePromptChanged,
-  positivePrompt2Changed,
-  negativePrompt2Changed,
-  shouldConcatPromptsChanged,
   refinerModelChanged,
   setRefinerSteps,
   setRefinerCFGScale,
@@ -356,34 +536,62 @@ export const {
   setRefinerNegativeAestheticScore,
   setRefinerStart,
   modelChanged,
+
+  // Dimensions
+  sizeRecalled,
+  widthChanged,
+  heightChanged,
+  aspectRatioLockToggled,
+  aspectRatioIdChanged,
+  dimensionsSwapped,
+  sizeOptimized,
+  syncedToOptimalDimension,
+
   paramsReset,
-} = paramsSlice.actions;
+} = slice.actions;
 
-/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-const migrate = (state: any): any => {
-  return state;
-};
+export const paramsSliceConfig: SliceConfig<typeof slice> = {
+  slice,
+  schema: zParamsState,
+  getInitialState: getInitialParamsState,
+  persistConfig: {
+    migrate: (state) => {
+      assert(isPlainObject(state));
 
-export const paramsPersistConfig: PersistConfig<ParamsState> = {
-  name: paramsSlice.name,
-  initialState,
-  migrate,
-  persistDenylist: [],
+      if (!('_version' in state)) {
+        // v0 -> v1, add _version and remove x/y from dimensions, lifting width/height to top level
+        state._version = 1;
+        state.dimensions.width = state.dimensions.rect.width;
+        state.dimensions.height = state.dimensions.rect.height;
+      }
+
+      if (state._version === 1) {
+        // v1 -> v2, add positive prompt history
+        state._version = 2;
+        state.positivePromptHistory = [];
+      }
+
+      return zParamsState.parse(state);
+    },
+  },
 };
 
 export const selectParamsSlice = (state: RootState) => state.params;
-export const createParamsSelector = <T>(selector: Selector<ParamsState, T>) =>
-  createSelector(selectParamsSlice, selector);
+const createParamsSelector = <T>(selector: Selector<ParamsState, T>) => createSelector(selectParamsSlice, selector);
 
 export const selectBase = createParamsSelector((params) => params.model?.base);
 export const selectIsSDXL = createParamsSelector((params) => params.model?.base === 'sdxl');
 export const selectIsFLUX = createParamsSelector((params) => params.model?.base === 'flux');
 export const selectIsSD3 = createParamsSelector((params) => params.model?.base === 'sd-3');
 export const selectIsCogView4 = createParamsSelector((params) => params.model?.base === 'cogview4');
-export const selectIsImagen3 = createParamsSelector((params) => params.model?.base === 'imagen3');
-export const selectIsImagen4 = createParamsSelector((params) => params.model?.base === 'imagen4');
-export const selectIsChatGTP4o = createParamsSelector((params) => params.model?.base === 'chatgpt-4o');
-export const selectIsFluxKontext = createParamsSelector((params) => params.model?.base === 'flux-kontext');
+export const selectIsZImage = createParamsSelector((params) => params.model?.base === 'z-image');
+export const selectIsFlux2 = createParamsSelector((params) => params.model?.base === 'flux2');
+export const selectIsFluxKontext = createParamsSelector((params) => {
+  if (params.model?.base === 'flux' && params.model?.name.toLowerCase().includes('kontext')) {
+    return true;
+  }
+  return false;
+});
 
 export const selectModel = createParamsSelector((params) => params.model);
 export const selectModelKey = createParamsSelector((params) => params.model?.key);
@@ -395,12 +603,18 @@ export const selectCLIPEmbedModel = createParamsSelector((params) => params.clip
 export const selectCLIPLEmbedModel = createParamsSelector((params) => params.clipLEmbedModel);
 
 export const selectCLIPGEmbedModel = createParamsSelector((params) => params.clipGEmbedModel);
+export const selectZImageVaeModel = createParamsSelector((params) => params.zImageVaeModel);
+export const selectZImageQwen3EncoderModel = createParamsSelector((params) => params.zImageQwen3EncoderModel);
+export const selectZImageQwen3SourceModel = createParamsSelector((params) => params.zImageQwen3SourceModel);
+export const selectKleinVaeModel = createParamsSelector((params) => params.kleinVaeModel);
+export const selectKleinQwen3EncoderModel = createParamsSelector((params) => params.kleinQwen3EncoderModel);
 
 export const selectCFGScale = createParamsSelector((params) => params.cfgScale);
 export const selectGuidance = createParamsSelector((params) => params.guidance);
 export const selectSteps = createParamsSelector((params) => params.steps);
 export const selectCFGRescaleMultiplier = createParamsSelector((params) => params.cfgRescaleMultiplier);
-export const selectCLIPSKip = createParamsSelector((params) => params.clipSkip);
+export const selectCLIPSkip = createParamsSelector((params) => params.clipSkip);
+export const selectHasModelCLIPSkip = createParamsSelector((params) => hasModelClipSkip(params.model));
 export const selectCanvasCoherenceEdgeSize = createParamsSelector((params) => params.canvasCoherenceEdgeSize);
 export const selectCanvasCoherenceMinDenoise = createParamsSelector((params) => params.canvasCoherenceMinDenoise);
 export const selectCanvasCoherenceMode = createParamsSelector((params) => params.canvasCoherenceMode);
@@ -415,10 +629,31 @@ export const selectImg2imgStrength = createParamsSelector((params) => params.img
 export const selectOptimizedDenoisingEnabled = createParamsSelector((params) => params.optimizedDenoisingEnabled);
 export const selectPositivePrompt = createParamsSelector((params) => params.positivePrompt);
 export const selectNegativePrompt = createParamsSelector((params) => params.negativePrompt);
-export const selectPositivePrompt2 = createParamsSelector((params) => params.positivePrompt2);
-export const selectNegativePrompt2 = createParamsSelector((params) => params.negativePrompt2);
-export const selectShouldConcatPrompts = createParamsSelector((params) => params.shouldConcatPrompts);
+export const selectNegativePromptWithFallback = createParamsSelector((params) => params.negativePrompt ?? '');
+export const selectHasNegativePrompt = createParamsSelector((params) => params.negativePrompt !== null);
+export const selectModelSupportsNegativePrompt = createSelector(
+  selectModel,
+  (model) => !!model && SUPPORTS_NEGATIVE_PROMPT_BASE_MODELS.includes(model.base)
+);
+export const selectModelSupportsRefImages = createSelector(
+  selectModel,
+  (model) => !!model && SUPPORTS_REF_IMAGES_BASE_MODELS.includes(model.base)
+);
+export const selectModelSupportsOptimizedDenoising = createSelector(
+  selectModel,
+  (model) => !!model && SUPPORTS_OPTIMIZED_DENOISING_BASE_MODELS.includes(model.base)
+);
 export const selectScheduler = createParamsSelector((params) => params.scheduler);
+export const selectFluxScheduler = createParamsSelector((params) => params.fluxScheduler);
+export const selectFluxDypePreset = createParamsSelector((params) => params.fluxDypePreset);
+export const selectFluxDypeScale = createParamsSelector((params) => params.fluxDypeScale);
+export const selectFluxDypeExponent = createParamsSelector((params) => params.fluxDypeExponent);
+export const selectZImageScheduler = createParamsSelector((params) => params.zImageScheduler);
+export const selectZImageSeedVarianceEnabled = createParamsSelector((params) => params.zImageSeedVarianceEnabled);
+export const selectZImageSeedVarianceStrength = createParamsSelector((params) => params.zImageSeedVarianceStrength);
+export const selectZImageSeedVarianceRandomizePercent = createParamsSelector(
+  (params) => params.zImageSeedVarianceRandomizePercent
+);
 export const selectSeamlessXAxis = createParamsSelector((params) => params.seamlessXAxis);
 export const selectSeamlessYAxis = createParamsSelector((params) => params.seamlessYAxis);
 export const selectSeed = createParamsSelector((params) => params.seed);
@@ -426,10 +661,12 @@ export const selectShouldRandomizeSeed = createParamsSelector((params) => params
 export const selectVAEPrecision = createParamsSelector((params) => params.vaePrecision);
 export const selectIterations = createParamsSelector((params) => params.iterations);
 export const selectShouldUseCPUNoise = createParamsSelector((params) => params.shouldUseCpuNoise);
+export const selectColorCompensation = createParamsSelector((params) => params.colorCompensation);
 
 export const selectUpscaleScheduler = createParamsSelector((params) => params.upscaleScheduler);
 export const selectUpscaleCfgScale = createParamsSelector((params) => params.upscaleCfgScale);
 
+export const selectPositivePromptHistory = createParamsSelector((params) => params.positivePromptHistory);
 export const selectRefinerCFGScale = createParamsSelector((params) => params.refinerCFGScale);
 export const selectRefinerModel = createParamsSelector((params) => params.refinerModel);
 export const selectIsRefinerModelSelected = createParamsSelector((params) => Boolean(params.refinerModel));
@@ -442,3 +679,30 @@ export const selectRefinerNegativeAestheticScore = createParamsSelector(
 export const selectRefinerScheduler = createParamsSelector((params) => params.refinerScheduler);
 export const selectRefinerStart = createParamsSelector((params) => params.refinerStart);
 export const selectRefinerSteps = createParamsSelector((params) => params.refinerSteps);
+
+export const selectWidth = createParamsSelector((params) => params.dimensions.width);
+export const selectHeight = createParamsSelector((params) => params.dimensions.height);
+export const selectAspectRatioID = createParamsSelector((params) => params.dimensions.aspectRatio.id);
+export const selectAspectRatioValue = createParamsSelector((params) => params.dimensions.aspectRatio.value);
+export const selectAspectRatioIsLocked = createParamsSelector((params) => params.dimensions.aspectRatio.isLocked);
+
+export const selectMainModelConfig = createSelector(
+  selectModelConfigsQuery,
+  selectParamsSlice,
+  (modelConfigs, { model }) => {
+    if (!modelConfigs.data) {
+      return null;
+    }
+    if (!model) {
+      return null;
+    }
+    const modelConfig = modelConfigsAdapterSelectors.selectById(modelConfigs.data, model.key);
+    if (!modelConfig) {
+      return null;
+    }
+    if (!isNonRefinerMainModelConfig(modelConfig)) {
+      return null;
+    }
+    return modelConfig;
+  }
+);

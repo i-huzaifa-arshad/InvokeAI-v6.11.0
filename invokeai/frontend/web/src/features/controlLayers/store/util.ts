@@ -1,25 +1,30 @@
 import { deepClone } from 'common/util/deepClone';
+import { merge } from 'es-toolkit/compat';
 import { getPrefixedId } from 'features/controlLayers/konva/util';
 import type {
   CanvasControlLayerState,
   CanvasImageState,
   CanvasInpaintMaskState,
   CanvasRasterLayerState,
-  CanvasReferenceImageState,
   CanvasRegionalGuidanceState,
-  ChatGPT4oReferenceImageConfig,
   ControlLoRAConfig,
   ControlNetConfig,
+  CroppableImageWithDims,
+  Flux2ReferenceImageConfig,
   FluxKontextReferenceImageConfig,
   FLUXReduxConfig,
   ImageWithDims,
   IPAdapterConfig,
+  RasterLayerAdjustments,
+  RefImageState,
+  RegionalGuidanceIPAdapterConfig,
   RgbColor,
   T2IAdapterConfig,
+  ZImageControlConfig,
 } from 'features/controlLayers/store/types';
-import { merge } from 'lodash-es';
 import type { ImageDTO } from 'services/api/types';
 import { assert } from 'tsafe';
+import type { PartialDeep } from 'type-fest';
 
 export const imageDTOToImageObject = (imageDTO: ImageDTO, overrides?: Partial<CanvasImageState>): CanvasImageState => {
   const { width, height, image_name } = imageDTO;
@@ -40,6 +45,21 @@ export const imageDTOToImageWithDims = ({ image_name, width, height }: ImageDTO)
   width,
   height,
 });
+
+export const imageDTOToCroppableImage = (
+  originalImageDTO: ImageDTO,
+  crop?: CroppableImageWithDims['crop']
+): CroppableImageWithDims => {
+  const { image_name, width, height } = originalImageDTO;
+  const val: CroppableImageWithDims = {
+    original: { image: { image_name, width, height } },
+  };
+  if (crop) {
+    val.crop = deepClone(crop);
+  }
+
+  return val;
+};
 
 const DEFAULT_RG_MASK_FILL_COLORS: RgbColor[] = [
   { r: 121, g: 157, b: 219 }, // rgb(121, 157, 219)
@@ -73,21 +93,29 @@ export const initialIPAdapter: IPAdapterConfig = {
   clipVisionModel: 'ViT-H',
   weight: 1,
 };
+export const initialRegionalGuidanceIPAdapter: RegionalGuidanceIPAdapterConfig = {
+  type: 'ip_adapter',
+  image: null,
+  model: null,
+  beginEndStepPct: [0, 1],
+  method: 'full',
+  clipVisionModel: 'ViT-H',
+  weight: 1,
+};
 export const initialFLUXRedux: FLUXReduxConfig = {
   type: 'flux_redux',
   image: null,
   model: null,
   imageInfluence: 'highest',
 };
-export const initialChatGPT4oReferenceImage: ChatGPT4oReferenceImageConfig = {
-  type: 'chatgpt_4o_reference_image',
-  image: null,
-  model: null,
-};
 export const initialFluxKontextReferenceImage: FluxKontextReferenceImageConfig = {
   type: 'flux_kontext_reference_image',
   image: null,
   model: null,
+};
+export const initialFlux2ReferenceImage: Flux2ReferenceImageConfig = {
+  type: 'flux2_reference_image',
+  image: null,
 };
 export const initialT2IAdapter: T2IAdapterConfig = {
   type: 't2i_adapter',
@@ -107,18 +135,44 @@ export const initialControlLoRA: ControlLoRAConfig = {
   model: null,
   weight: 0.75,
 };
+export const initialZImageControl: ZImageControlConfig = {
+  type: 'z_image_control',
+  model: null,
+  weight: 0.75, // control_context_scale, recommended 0.65-0.80
+  beginEndStepPct: [0, 1],
+};
 
-export const getReferenceImageState = (
-  id: string,
-  overrides?: Partial<CanvasReferenceImageState>
-): CanvasReferenceImageState => {
-  const entityState: CanvasReferenceImageState = {
+export const makeDefaultRasterLayerAdjustments = (mode: 'simple' | 'curves' = 'simple'): RasterLayerAdjustments => ({
+  version: 1,
+  enabled: true,
+  collapsed: false,
+  mode,
+  simple: { brightness: 0, contrast: 0, saturation: 0, temperature: 0, tint: 0, sharpness: 0 },
+  curves: {
+    master: [
+      [0, 0],
+      [255, 255],
+    ],
+    r: [
+      [0, 0],
+      [255, 255],
+    ],
+    g: [
+      [0, 0],
+      [255, 255],
+    ],
+    b: [
+      [0, 0],
+      [255, 255],
+    ],
+  },
+});
+
+export const getReferenceImageState = (id: string, overrides?: PartialDeep<RefImageState>): RefImageState => {
+  const entityState: RefImageState = {
     id,
-    type: 'reference_image',
-    name: null,
-    isLocked: false,
     isEnabled: true,
-    ipAdapter: deepClone(initialIPAdapter),
+    config: deepClone(initialIPAdapter),
   };
   merge(entityState, overrides);
   return entityState;
@@ -126,7 +180,7 @@ export const getReferenceImageState = (
 
 export const getRegionalGuidanceState = (
   id: string,
-  overrides?: Partial<CanvasRegionalGuidanceState>
+  overrides?: PartialDeep<CanvasRegionalGuidanceState>
 ): CanvasRegionalGuidanceState => {
   const entityState: CanvasRegionalGuidanceState = {
     id,
@@ -152,7 +206,7 @@ export const getRegionalGuidanceState = (
 
 export const getControlLayerState = (
   id: string,
-  overrides?: Partial<CanvasControlLayerState>
+  overrides?: PartialDeep<CanvasControlLayerState>
 ): CanvasControlLayerState => {
   const entityState: CanvasControlLayerState = {
     id,
@@ -172,7 +226,7 @@ export const getControlLayerState = (
 
 export const getRasterLayerState = (
   id: string,
-  overrides?: Partial<CanvasRasterLayerState>
+  overrides?: PartialDeep<CanvasRasterLayerState>
 ): CanvasRasterLayerState => {
   const entityState: CanvasRasterLayerState = {
     id,
@@ -183,6 +237,7 @@ export const getRasterLayerState = (
     objects: [],
     opacity: 1,
     position: { x: 0, y: 0 },
+    adjustments: undefined,
   };
   merge(entityState, overrides);
   return entityState;
@@ -190,7 +245,7 @@ export const getRasterLayerState = (
 
 export const getInpaintMaskState = (
   id: string,
-  overrides?: Partial<CanvasInpaintMaskState>
+  overrides?: PartialDeep<CanvasInpaintMaskState>
 ): CanvasInpaintMaskState => {
   const entityState: CanvasInpaintMaskState = {
     id,
@@ -215,7 +270,7 @@ export const getInpaintMaskState = (
 const convertRasterLayerToControlLayer = (
   newId: string,
   rasterLayerState: CanvasRasterLayerState,
-  overrides?: Partial<CanvasControlLayerState>
+  overrides?: PartialDeep<CanvasControlLayerState>
 ): CanvasControlLayerState => {
   const { name, objects, position } = rasterLayerState;
   const controlLayerState = getControlLayerState(newId, {
@@ -230,7 +285,7 @@ const convertRasterLayerToControlLayer = (
 const convertRasterLayerToInpaintMask = (
   newId: string,
   rasterLayerState: CanvasRasterLayerState,
-  overrides?: Partial<CanvasInpaintMaskState>
+  overrides?: PartialDeep<CanvasInpaintMaskState>
 ): CanvasInpaintMaskState => {
   const { name, objects, position } = rasterLayerState;
   const inpaintMaskState = getInpaintMaskState(newId, {
@@ -245,7 +300,7 @@ const convertRasterLayerToInpaintMask = (
 const convertRasterLayerToRegionalGuidance = (
   newId: string,
   rasterLayerState: CanvasRasterLayerState,
-  overrides?: Partial<CanvasRegionalGuidanceState>
+  overrides?: PartialDeep<CanvasRegionalGuidanceState>
 ): CanvasRegionalGuidanceState => {
   const { name, objects, position } = rasterLayerState;
   const regionalGuidanceState = getRegionalGuidanceState(newId, {
@@ -260,7 +315,7 @@ const convertRasterLayerToRegionalGuidance = (
 const convertControlLayerToRasterLayer = (
   newId: string,
   controlLayerState: CanvasControlLayerState,
-  overrides?: Partial<CanvasRasterLayerState>
+  overrides?: PartialDeep<CanvasRasterLayerState>
 ): CanvasRasterLayerState => {
   const { name, objects, position } = controlLayerState;
   const rasterLayerState = getRasterLayerState(newId, {
@@ -275,7 +330,7 @@ const convertControlLayerToRasterLayer = (
 const convertControlLayerToInpaintMask = (
   newId: string,
   rasterLayerState: CanvasControlLayerState,
-  overrides?: Partial<CanvasInpaintMaskState>
+  overrides?: PartialDeep<CanvasInpaintMaskState>
 ): CanvasInpaintMaskState => {
   const { name, objects, position } = rasterLayerState;
   const inpaintMaskState = getInpaintMaskState(newId, {
@@ -290,7 +345,7 @@ const convertControlLayerToInpaintMask = (
 const convertControlLayerToRegionalGuidance = (
   newId: string,
   rasterLayerState: CanvasControlLayerState,
-  overrides?: Partial<CanvasRegionalGuidanceState>
+  overrides?: PartialDeep<CanvasRegionalGuidanceState>
 ): CanvasRegionalGuidanceState => {
   const { name, objects, position } = rasterLayerState;
   const regionalGuidanceState = getRegionalGuidanceState(newId, {
@@ -305,7 +360,7 @@ const convertControlLayerToRegionalGuidance = (
 const convertInpaintMaskToRegionalGuidance = (
   newId: string,
   inpaintMaskState: CanvasInpaintMaskState,
-  overrides?: Partial<CanvasRegionalGuidanceState>
+  overrides?: PartialDeep<CanvasRegionalGuidanceState>
 ): CanvasRegionalGuidanceState => {
   const { name, objects, position } = inpaintMaskState;
   const regionalGuidanceState = getRegionalGuidanceState(newId, {
@@ -320,7 +375,7 @@ const convertInpaintMaskToRegionalGuidance = (
 const convertRegionalGuidanceToInpaintMask = (
   newId: string,
   regionalGuidanceState: CanvasRegionalGuidanceState,
-  overrides?: Partial<CanvasInpaintMaskState>
+  overrides?: PartialDeep<CanvasInpaintMaskState>
 ): CanvasInpaintMaskState => {
   const { name, objects, position } = regionalGuidanceState;
   const inpaintMaskState = getInpaintMaskState(newId, {

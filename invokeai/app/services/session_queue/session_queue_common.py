@@ -1,7 +1,7 @@
 import datetime
 import json
 from itertools import chain, product
-from typing import Generator, Literal, Optional, TypeAlias, Union, cast
+from typing import Generator, Literal, Optional, TypeAlias, Union
 
 from pydantic import (
     AliasChoices,
@@ -15,7 +15,6 @@ from pydantic import (
 )
 from pydantic_core import to_jsonable_python
 
-from invokeai.app.invocations.baseinvocation import BaseInvocation
 from invokeai.app.invocations.fields import ImageField
 from invokeai.app.services.shared.graph import Graph, GraphExecutionState, NodeNotFoundError
 from invokeai.app.services.workflow_records.workflow_records_common import (
@@ -137,20 +136,18 @@ class Batch(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def validate_batch_nodes_and_edges(cls, values):
-        batch_data_collection = cast(Optional[BatchDataCollection], values.data)
-        if batch_data_collection is None:
-            return values
-        graph = cast(Graph, values.graph)
-        for batch_data_list in batch_data_collection:
+    def validate_batch_nodes_and_edges(self):
+        if self.data is None:
+            return self
+        for batch_data_list in self.data:
             for batch_data in batch_data_list:
                 try:
-                    node = cast(BaseInvocation, graph.get_node(batch_data.node_path))
+                    node = self.graph.get_node(batch_data.node_path)
                 except NodeNotFoundError:
                     raise NodeNotFoundError(f"Node {batch_data.node_path} not found in graph")
                 if batch_data.field_name not in type(node).model_fields:
                     raise NodeNotFoundError(f"Field {batch_data.field_name} not found in node {batch_data.node_path}")
-        return values
+        return self
 
     @field_validator("graph")
     def validate_graph(cls, v: Graph):
@@ -175,6 +172,14 @@ class Batch(BaseModel):
 DEFAULT_QUEUE_ID = "default"
 
 QUEUE_ITEM_STATUS = Literal["pending", "in_progress", "completed", "failed", "canceled"]
+
+
+class ItemIdsResult(BaseModel):
+    """Response containing ordered item ids with metadata for optimistic updates."""
+
+    item_ids: list[int] = Field(description="Ordered list of item ids")
+    total_count: int = Field(description="Total number of queue items matching the query")
+
 
 NodeFieldValueValidator = TypeAdapter(list[NodeFieldValue])
 
@@ -208,7 +213,7 @@ class FieldIdentifier(BaseModel):
     user_label: str | None = Field(description="The user label of the field, if any")
 
 
-class SessionQueueItemWithoutGraph(BaseModel):
+class SessionQueueItem(BaseModel):
     """Session queue item without the full graph. Used for serialization."""
 
     item_id: int = Field(description="The identifier of the session queue item")
@@ -244,50 +249,6 @@ class SessionQueueItemWithoutGraph(BaseModel):
     retried_from_item_id: Optional[int] = Field(
         default=None, description="The item_id of the queue item that this item was retried from"
     )
-    is_api_validation_run: bool = Field(
-        default=False,
-        description="Whether this queue item is an API validation run.",
-    )
-    published_workflow_id: Optional[str] = Field(
-        default=None,
-        description="The ID of the published workflow associated with this queue item",
-    )
-    api_input_fields: Optional[list[FieldIdentifier]] = Field(
-        default=None, description="The fields that were used as input to the API"
-    )
-    api_output_fields: Optional[list[FieldIdentifier]] = Field(
-        default=None, description="The nodes that were used as output from the API"
-    )
-    credits: Optional[float] = Field(default=None, description="The total credits used for this queue item")
-
-    @classmethod
-    def queue_item_dto_from_dict(cls, queue_item_dict: dict) -> "SessionQueueItemDTO":
-        # must parse these manually
-        queue_item_dict["field_values"] = get_field_values(queue_item_dict)
-        return SessionQueueItemDTO(**queue_item_dict)
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "required": [
-                "item_id",
-                "status",
-                "batch_id",
-                "queue_id",
-                "session_id",
-                "priority",
-                "session_id",
-                "created_at",
-                "updated_at",
-            ]
-        }
-    )
-
-
-class SessionQueueItemDTO(SessionQueueItemWithoutGraph):
-    pass
-
-
-class SessionQueueItem(SessionQueueItemWithoutGraph):
     session: GraphExecutionState = Field(description="The fully-populated session to be executed")
     workflow: Optional[WorkflowWithoutID] = Field(
         default=None, description="The workflow associated with this queue item"
@@ -367,6 +328,7 @@ class EnqueueBatchResult(BaseModel):
     requested: int = Field(description="The total number of queue items requested to be enqueued")
     batch: Batch = Field(description="The batch that was enqueued")
     priority: int = Field(description="The priority of the enqueued batch")
+    item_ids: list[int] = Field(description="The IDs of the queue items that were enqueued")
 
 
 class RetryItemsResult(BaseModel):
@@ -394,6 +356,18 @@ class CancelByBatchIDsResult(BaseModel):
 
 class CancelByDestinationResult(CancelByBatchIDsResult):
     """Result of canceling by a destination"""
+
+    pass
+
+
+class DeleteByDestinationResult(BaseModel):
+    """Result of deleting by a destination"""
+
+    deleted: int = Field(..., description="Number of queue items deleted")
+
+
+class DeleteAllExceptCurrentResult(DeleteByDestinationResult):
+    """Result of deleting all except current"""
 
     pass
 

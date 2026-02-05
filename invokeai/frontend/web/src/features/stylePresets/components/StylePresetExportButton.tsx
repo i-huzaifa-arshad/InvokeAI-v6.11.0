@@ -27,7 +27,7 @@ export const StylePresetExportButton = () => {
     try {
       const response = await exportStylePresets().unwrap();
       blob = new Blob([response], { type: 'text/csv' });
-    } catch (error) {
+    } catch {
       toast({
         status: 'error',
         title: t('stylePresets.exportFailed'),
@@ -53,14 +53,13 @@ export const StylePresetExportButton = () => {
 
   return (
     <IconButton
+      size="sm"
+      variant="link"
+      alignSelf="stretch"
       onClick={handleClickDownloadCsv}
       icon={!isLoading ? <PiDownloadSimpleBold /> : <PiSpinner />}
       tooltip={t('stylePresets.exportPromptTemplates')}
       aria-label={t('stylePresets.exportPromptTemplates')}
-      size="md"
-      variant="link"
-      w={8}
-      h={8}
       sx={isLoading ? loadingStyles : undefined}
       isDisabled={isLoading || presetCount === 0}
     />

@@ -7,9 +7,8 @@ import type {
   TagDescription,
 } from '@reduxjs/toolkit/query/react';
 import { buildCreateApi, coreModule, fetchBaseQuery, reactHooksModule } from '@reduxjs/toolkit/query/react';
-import { $authToken } from 'app/store/nanostores/authToken';
-import { $baseUrl } from 'app/store/nanostores/baseUrl';
-import { $projectId } from 'app/store/nanostores/projectId';
+import queryString from 'query-string';
+import stableHash from 'stable-hash';
 
 const tagTypes = [
   'AppVersion',
@@ -23,8 +22,11 @@ const tagTypes = [
   'ImageList',
   'ImageMetadata',
   'ImageWorkflow',
+  'ImageCollectionCounts',
+  'ImageCollection',
   'ImageMetadataFromFile',
   'IntermediatesCount',
+  'SessionQueueItemIdList',
   'SessionQueueItem',
   'SessionQueueStatus',
   'SessionProcessorStatus',
@@ -45,6 +47,7 @@ const tagTypes = [
   'LoRAModel',
   'SDXLRefinerModel',
   'Workflow',
+  'WorkflowTags',
   'WorkflowTagCounts',
   'WorkflowCategoryCounts',
   'StylePreset',
@@ -53,20 +56,23 @@ const tagTypes = [
   // This is invalidated on reconnect. It should be used for queries that have changing data,
   // especially related to the queue and generation.
   'FetchOnReconnect',
+  'ClientState',
 ] as const;
 export type ApiTagDescription = TagDescription<(typeof tagTypes)[number]>;
 export const LIST_TAG = 'LIST';
+export const LIST_ALL_TAG = 'LIST_ALL';
+
+export const getBaseUrl = (): string => {
+  return window.location.href.replace(/\/$/, '');
+};
 
 const dynamicBaseQuery: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQueryError> = (args, api, extraOptions) => {
-  const baseUrl = $baseUrl.get();
-  const authToken = $authToken.get();
-  const projectId = $projectId.get();
   const isOpenAPIRequest =
     (args instanceof Object && args.url.includes('openapi.json')) ||
     (typeof args === 'string' && args.includes('openapi.json'));
 
   const fetchBaseQueryArgs: FetchBaseQueryArgs = {
-    baseUrl: baseUrl || window.location.href.replace(/\/$/, ''),
+    baseUrl: getBaseUrl(),
   };
 
   // When fetching the openapi.json, we need to remove circular references from the JSON.
@@ -74,26 +80,15 @@ const dynamicBaseQuery: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQueryE
     fetchBaseQueryArgs.jsonReplacer = getCircularReplacer();
   }
 
-  // openapi.json isn't protected by authorization, but all other requests need to include the auth token and project id.
-  if (!isOpenAPIRequest) {
-    fetchBaseQueryArgs.prepareHeaders = (headers) => {
-      if (authToken) {
-        headers.set('Authorization', `Bearer ${authToken}`);
-      }
-      if (projectId) {
-        headers.set('project-id', projectId);
-      }
-
-      return headers;
-    };
-  }
-
   const rawBaseQuery = fetchBaseQuery(fetchBaseQueryArgs);
 
   return rawBaseQuery(args, api, extraOptions);
 };
 
-const createLruSelector = createSelectorCreator(lruMemoize);
+const createLruSelector = createSelectorCreator({
+  memoize: lruMemoize,
+  argsMemoize: lruMemoize,
+});
 
 const customCreateApi = buildCreateApi(
   coreModule({ createSelector: createLruSelector }),
@@ -106,6 +101,8 @@ export const api = customCreateApi({
   tagTypes,
   endpoints: () => ({}),
   invalidationBehavior: 'immediately',
+  serializeQueryArgs: stableHash,
+  refetchOnReconnect: true,
 });
 
 function getCircularReplacer() {
@@ -130,5 +127,10 @@ function getCircularReplacer() {
   };
 }
 
-export const buildV1Url = (path: string): string => `api/v1/${path}`;
+export const buildV1Url = (path: string, query?: Parameters<typeof queryString.stringify>[0]): string => {
+  if (!query) {
+    return `api/v1/${path}`;
+  }
+  return `api/v1/${path}?${queryString.stringify(query)}`;
+};
 export const buildV2Url = (path: string): string => `api/v2/${path}`;

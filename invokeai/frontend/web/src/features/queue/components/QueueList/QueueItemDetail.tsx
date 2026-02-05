@@ -1,33 +1,31 @@
 import { Button, ButtonGroup, Flex, Heading, Spinner, Text } from '@invoke-ai/ui-library';
+import { get } from 'es-toolkit/compat';
 import DataViewer from 'features/gallery/components/ImageMetadataViewer/DataViewer';
 import { useDestinationText } from 'features/queue/components/QueueList/useDestinationText';
 import { useOriginText } from 'features/queue/components/QueueList/useOriginText';
+import { useBatchIsCanceled } from 'features/queue/hooks/useBatchIsCanceled';
 import { useCancelBatch } from 'features/queue/hooks/useCancelBatch';
 import { useCancelQueueItem } from 'features/queue/hooks/useCancelQueueItem';
 import { useRetryQueueItem } from 'features/queue/hooks/useRetryQueueItem';
 import { getSecondsFromTimestamps } from 'features/queue/util/getSecondsFromTimestamps';
-import { useFeatureStatus } from 'features/system/hooks/useFeatureStatus';
-import { get } from 'lodash-es';
 import type { ReactNode } from 'react';
-import { memo, useMemo } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PiArrowCounterClockwiseBold, PiXBold } from 'react-icons/pi';
 import { useGetQueueItemQuery } from 'services/api/endpoints/queue';
-import type { SessionQueueItemDTO } from 'services/api/types';
+import type { S } from 'services/api/types';
 
 type Props = {
-  queueItemDTO: SessionQueueItemDTO;
+  queueItem: S['SessionQueueItem'];
 };
 
-const QueueItemComponent = ({ queueItemDTO }: Props) => {
+const QueueItemComponent = ({ queueItem: queueItemDTO }: Props) => {
   const { session_id, batch_id, item_id, origin, destination } = queueItemDTO;
   const { t } = useTranslation();
-  const isRetryEnabled = useFeatureStatus('retryQueueItem');
-  const { cancelBatch, isLoading: isLoadingCancelBatch, isCanceled: isBatchCanceled } = useCancelBatch(batch_id);
-
-  const { cancelQueueItem, isLoading: isLoadingCancelQueueItem } = useCancelQueueItem(item_id);
-  const { retryQueueItem, isLoading: isLoadingRetryQueueItem } = useRetryQueueItem(item_id);
-
+  const isBatchCanceled = useBatchIsCanceled(batch_id);
+  const cancelBatch = useCancelBatch();
+  const cancelQueueItem = useCancelQueueItem();
+  const retryQueueItem = useRetryQueueItem();
   const { data: queueItem } = useGetQueueItemQuery(item_id);
 
   const originText = useOriginText(origin);
@@ -54,6 +52,18 @@ const QueueItemComponent = ({ queueItemDTO }: Props) => {
 
   const isFailed = useMemo(() => !!queueItem && ['canceled', 'failed'].includes(queueItem.status), [queueItem]);
 
+  const onCancelBatch = useCallback(() => {
+    cancelBatch.trigger(batch_id);
+  }, [cancelBatch, batch_id]);
+
+  const onCancelQueueItem = useCallback(() => {
+    cancelQueueItem.trigger(item_id);
+  }, [cancelQueueItem, item_id]);
+
+  const onRetryQueueItem = useCallback(() => {
+    retryQueueItem.trigger(item_id);
+  }, [retryQueueItem, item_id]);
+
   return (
     <Flex layerStyle="third" flexDir="column" p={2} pt={0} borderRadius="base" gap={2}>
       <Flex
@@ -72,11 +82,11 @@ const QueueItemComponent = ({ queueItemDTO }: Props) => {
         <QueueItemData label={t('queue.batch')} data={batch_id} />
         <QueueItemData label={t('queue.session')} data={session_id} />
         <ButtonGroup size="xs" orientation="vertical">
-          {(!isFailed || !isRetryEnabled) && (
+          {!isFailed && (
             <Button
-              onClick={cancelQueueItem}
-              isLoading={isLoadingCancelQueueItem}
-              isDisabled={queueItem ? isCanceled : true}
+              onClick={onCancelQueueItem}
+              isLoading={cancelQueueItem.isLoading}
+              isDisabled={cancelQueueItem.isDisabled || queueItem ? isCanceled : true}
               aria-label={t('queue.cancelItem')}
               leftIcon={<PiXBold />}
               colorScheme="error"
@@ -84,11 +94,11 @@ const QueueItemComponent = ({ queueItemDTO }: Props) => {
               {t('queue.cancelItem')}
             </Button>
           )}
-          {isFailed && isRetryEnabled && (
+          {isFailed && (
             <Button
-              onClick={retryQueueItem}
-              isLoading={isLoadingRetryQueueItem}
-              isDisabled={!queueItem}
+              onClick={onRetryQueueItem}
+              isLoading={retryQueueItem.isLoading}
+              isDisabled={retryQueueItem.isDisabled || !queueItem}
               aria-label={t('queue.retryItem')}
               leftIcon={<PiArrowCounterClockwiseBold />}
               colorScheme="invokeBlue"
@@ -97,9 +107,9 @@ const QueueItemComponent = ({ queueItemDTO }: Props) => {
             </Button>
           )}
           <Button
-            onClick={cancelBatch}
-            isLoading={isLoadingCancelBatch}
-            isDisabled={isBatchCanceled}
+            onClick={onCancelBatch}
+            isLoading={cancelBatch.isLoading}
+            isDisabled={cancelBatch.isDisabled || isBatchCanceled}
             aria-label={t('queue.cancelBatch')}
             leftIcon={<PiXBold />}
             colorScheme="error"

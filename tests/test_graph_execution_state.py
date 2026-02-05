@@ -152,6 +152,29 @@ def test_graph_state_prepares_eagerly():
 
 def test_graph_executes_depth_first():
     """Tests that the graph executes depth-first, executing a branch as far as possible before moving to the next branch"""
+
+    def assert_topo_order_and_all_executed(state: GraphExecutionState, order: list[str]):
+        """
+        Validates:
+          1) Every materialized exec node executed exactly once.
+          2) Execution order respects all exec-graph dependencies (u→v ⇒ u before v).
+        """
+        # order must be EXEC node ids in run order
+        exec_nodes = set(state.execution_graph.nodes.keys())
+
+        # 1) coverage: all exec nodes ran, and no duplicates
+        pos = {nid: i for i, nid in enumerate(order)}
+        assert set(pos.keys()) == exec_nodes, (
+            f"Executed {len(pos)} of {len(exec_nodes)} nodes. Missing: {sorted(exec_nodes - set(pos))[:10]}"
+        )
+        assert len(pos) == len(order), "Duplicate execution detected"
+
+        # 2) topo order: parents before children
+        for e in state.execution_graph.edges:
+            u = e.source.node_id
+            v = e.destination.node_id
+            assert pos[u] < pos[v], f"child {v} ran before parent {u}"
+
     graph = Graph()
 
     test_prompts = ["Banana sushi", "Cat sushi"]
@@ -164,36 +187,17 @@ def test_graph_executes_depth_first():
     graph.add_edge(create_edge("prompt_iterated", "prompt", "prompt_successor", "prompt"))
 
     g = GraphExecutionState(graph=graph)
-    _ = invoke_next(g)
-    _ = invoke_next(g)
-    _ = invoke_next(g)
-    _ = invoke_next(g)
+    order: list[str] = []
 
-    # Because ordering is not guaranteed, we cannot compare results directly.
-    # Instead, we must count the number of results.
-    def get_completed_count(g: GraphExecutionState, id: str):
-        ids = list(g.source_prepared_mapping[id])
-        completed_ids = [i for i in g.executed if i in ids]
-        return len(completed_ids)
+    while True:
+        n = g.next()
+        if n is None:
+            break
+        o = n.invoke(Mock(InvocationContext))
+        g.complete(n.id, o)
+        order.append(n.id)
 
-    # Check at each step that the number of executed nodes matches the expectation for depth-first execution
-    assert get_completed_count(g, "prompt_iterated") == 1
-    assert get_completed_count(g, "prompt_successor") == 0
-
-    _ = invoke_next(g)
-
-    assert get_completed_count(g, "prompt_iterated") == 1
-    assert get_completed_count(g, "prompt_successor") == 1
-
-    _ = invoke_next(g)
-
-    assert get_completed_count(g, "prompt_iterated") == 2
-    assert get_completed_count(g, "prompt_successor") == 1
-
-    _ = invoke_next(g)
-
-    assert get_completed_count(g, "prompt_iterated") == 2
-    assert get_completed_count(g, "prompt_successor") == 2
+    assert_topo_order_and_all_executed(g, order)
 
 
 # Because this tests deterministic ordering, we run it multiple times
@@ -221,3 +225,92 @@ def test_graph_iterate_execution_order(execution_number: int):
     _ = invoke_next(g)
     assert _[1].item == "Dinosaur Sushi"
     _ = invoke_next(g)
+
+
+# Because this tests deterministic ordering, we run it multiple times
+@pytest.mark.parametrize("execution_number", range(5))
+def test_graph_nested_iterate_execution_order(execution_number: int):
+    """
+    Validates best-effort in-order execution for nodes expanded under nested iterators.
+    Expected lexicographic order by (outer_index, inner_index), subject to readiness.
+    """
+    graph = Graph()
+
+    # Outer iterator: [0, 1]
+    graph.add_node(RangeInvocation(id="outer_range", start=0, stop=2, step=1))
+    graph.add_node(IterateInvocation(id="outer_iter"))
+
+    # Inner iterator is derived from the outer item:
+    # start = outer_item * 10
+    # stop  = start + 2  => yields 2 items per outer item
+    graph.add_node(MultiplyInvocation(id="mul10", b=10))
+    graph.add_node(AddInvocation(id="stop_plus2", b=2))
+    graph.add_node(RangeInvocation(id="inner_range", start=0, stop=1, step=1))
+    graph.add_node(IterateInvocation(id="inner_iter"))
+
+    # Observe inner items (they encode outer via start=outer*10)
+    graph.add_node(AddInvocation(id="sum", b=0))
+
+    graph.add_edge(create_edge("outer_range", "collection", "outer_iter", "collection"))
+    graph.add_edge(create_edge("outer_iter", "item", "mul10", "a"))
+    graph.add_edge(create_edge("mul10", "value", "stop_plus2", "a"))
+    graph.add_edge(create_edge("mul10", "value", "inner_range", "start"))
+    graph.add_edge(create_edge("stop_plus2", "value", "inner_range", "stop"))
+    graph.add_edge(create_edge("inner_range", "collection", "inner_iter", "collection"))
+    graph.add_edge(create_edge("inner_iter", "item", "sum", "a"))
+
+    g = GraphExecutionState(graph=graph)
+    sum_values: list[int] = []
+
+    while True:
+        n, o = invoke_next(g)
+        if n is None:
+            break
+        if g.prepared_source_mapping[n.id] == "sum":
+            sum_values.append(o.value)
+
+    assert sum_values == [0, 1, 10, 11]
+
+
+def test_graph_validate_self_iterator_without_collection_input_raises_invalid_edge_error():
+    """Iterator nodes with no collection input should fail validation cleanly.
+
+    This test exposes the bug where validation crashes with IndexError instead of raising InvalidEdgeError.
+    """
+    from invokeai.app.services.shared.graph import InvalidEdgeError
+
+    graph = Graph()
+    graph.add_node(IterateInvocation(id="iterate"))
+
+    with pytest.raises(InvalidEdgeError):
+        graph.validate_self()
+
+
+def test_graph_validate_self_collector_without_item_inputs_raises_invalid_edge_error():
+    """Collector nodes with no item inputs should fail validation cleanly.
+
+    This test exposes the bug where validation can crash (e.g. StopIteration) instead of raising InvalidEdgeError.
+    """
+    from invokeai.app.services.shared.graph import InvalidEdgeError
+
+    graph = Graph()
+    graph.add_node(CollectInvocation(id="collect"))
+
+    with pytest.raises(InvalidEdgeError):
+        graph.validate_self()
+
+
+def test_are_connection_types_compatible_accepts_subclass_to_base():
+    """A subclass output should be connectable to a base-class input.
+
+    This test exposes the bug where non-Union targets reject valid subclass connections.
+    """
+    from invokeai.app.services.shared.graph import are_connection_types_compatible
+
+    class Base:
+        pass
+
+    class Child(Base):
+        pass
+
+    assert are_connection_types_compatible(Child, Base) is True

@@ -1,44 +1,31 @@
 import { IconButton } from '@invoke-ai/ui-library';
-import { useAppDispatch, useAppSelector } from 'app/store/storeHooks';
-import {
-  selectImageCount,
-  selectSelectedImage,
-  selectStagedImageIndex,
-  stagingAreaReset,
-  stagingAreaStagedImageDiscarded,
-} from 'features/controlLayers/store/canvasStagingAreaSlice';
-import { memo, useCallback } from 'react';
+import { useStore } from '@nanostores/react';
+import { useStagingAreaContext } from 'features/controlLayers/components/StagingArea/context';
+import { useCanvasManager } from 'features/controlLayers/contexts/CanvasManagerProviderGate';
+import { useCancelQueueItem } from 'features/queue/hooks/useCancelQueueItem';
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PiXBold } from 'react-icons/pi';
 
 export const StagingAreaToolbarDiscardSelectedButton = memo(() => {
-  const dispatch = useAppDispatch();
-  const index = useAppSelector(selectStagedImageIndex);
-  const selectedImage = useAppSelector(selectSelectedImage);
-  const imageCount = useAppSelector(selectImageCount);
+  const canvasManager = useCanvasManager();
+  const shouldShowStagedImage = useStore(canvasManager.stagingArea.$shouldShowStagedImage);
+
+  const ctx = useStagingAreaContext();
+  const cancelQueueItem = useCancelQueueItem();
+  const discardSelectedIsEnabled = useStore(ctx.$discardSelectedIsEnabled);
 
   const { t } = useTranslation();
-
-  const discardSelected = useCallback(() => {
-    if (!selectedImage) {
-      return;
-    }
-    if (imageCount === 1) {
-      dispatch(stagingAreaReset());
-    } else {
-      dispatch(stagingAreaStagedImageDiscarded({ index }));
-    }
-  }, [selectedImage, imageCount, dispatch, index]);
 
   return (
     <IconButton
       tooltip={t('controlLayers.stagingArea.discard')}
       aria-label={t('controlLayers.stagingArea.discard')}
       icon={<PiXBold />}
-      onClick={discardSelected}
+      onClick={ctx.discardSelected}
       colorScheme="invokeBlue"
-      fontSize={16}
-      isDisabled={!selectedImage}
+      isDisabled={!discardSelectedIsEnabled || cancelQueueItem.isDisabled || !shouldShowStagedImage}
+      isLoading={cancelQueueItem.isLoading}
     />
   );
 });

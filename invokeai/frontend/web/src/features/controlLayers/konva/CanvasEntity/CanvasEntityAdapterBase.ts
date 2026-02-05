@@ -16,7 +16,6 @@ import {
   selectIsolatedLayerPreview,
   selectIsolatedStagingPreview,
 } from 'features/controlLayers/store/canvasSettingsSlice';
-import { selectIsStaging } from 'features/controlLayers/store/canvasStagingAreaSlice';
 import {
   buildSelectIsSelected,
   getSelectIsTypeHidden,
@@ -26,7 +25,7 @@ import {
 } from 'features/controlLayers/store/selectors';
 import type {
   CanvasEntityIdentifier,
-  CanvasRenderableEntityState,
+  CanvasEntityState,
   LifecycleCallback,
   Rect,
 } from 'features/controlLayers/store/types';
@@ -41,10 +40,7 @@ import stableHash from 'stable-hash';
 import { assert } from 'tsafe';
 import type { Jsonifiable, JsonObject } from 'type-fest';
 
-export abstract class CanvasEntityAdapterBase<
-  T extends CanvasRenderableEntityState,
-  U extends string,
-> extends CanvasModuleBase {
+export abstract class CanvasEntityAdapterBase<T extends CanvasEntityState, U extends string> extends CanvasModuleBase {
   readonly type: U;
   readonly id: string;
   readonly path: string[];
@@ -286,7 +282,7 @@ export abstract class CanvasEntityAdapterBase<
     this.subscriptions.add(
       this.manager.stateApi.createStoreSubscription(selectIsolatedStagingPreview, this.syncVisibility)
     );
-    this.subscriptions.add(this.manager.stateApi.createStoreSubscription(selectIsStaging, this.syncVisibility));
+    this.subscriptions.add(this.manager.stagingArea.$isStaging.listen(this.syncVisibility));
     this.subscriptions.add(this.manager.stateApi.$filteringAdapter.listen(this.syncVisibility));
     this.subscriptions.add(this.manager.stateApi.$transformingAdapter.listen(this.syncVisibility));
     this.subscriptions.add(this.manager.stateApi.$segmentingAdapter.listen(this.syncVisibility));
@@ -465,7 +461,7 @@ export abstract class CanvasEntityAdapterBase<
        * This allows the user to easily see how the new generation fits in with the rest of the canvas without the
        * other layer types getting in the way.
        */
-      const isStaging = this.manager.stateApi.runSelector(selectIsStaging);
+      const isStaging = this.manager.stagingArea.$isStaging.get();
       const isRasterLayer = isRasterLayerEntityIdentifier(this.entityIdentifier);
       if (isStaging && !isRasterLayer) {
         this.setVisibility(false);
@@ -479,7 +475,7 @@ export abstract class CanvasEntityAdapterBase<
        * to hide this entity.
        */
       const filteringAdapter = this.manager.stateApi.$filteringAdapter.get();
-      if (filteringAdapter && filteringAdapter !== this) {
+      if (filteringAdapter && filteringAdapter.id !== this.id) {
         this.setVisibility(false);
         return;
       }
@@ -496,7 +492,7 @@ export abstract class CanvasEntityAdapterBase<
       }
 
       const segmentingAdapter = this.manager.stateApi.$segmentingAdapter.get();
-      if (segmentingAdapter && segmentingAdapter !== this) {
+      if (segmentingAdapter && segmentingAdapter.id !== this.id) {
         this.setVisibility(false);
         return;
       }
@@ -548,6 +544,14 @@ export abstract class CanvasEntityAdapterBase<
       this.renderer.updateCompositingRectFill();
     }
     this.renderer.syncKonvaCache();
+  };
+
+  /**
+   * Invalidates the raster cache for this entity by delegating to the renderer's
+   * `invalidateRasterCache` method.
+   */
+  invalidateRasterCache = () => {
+    this.renderer.invalidateRasterCache();
   };
 
   /**

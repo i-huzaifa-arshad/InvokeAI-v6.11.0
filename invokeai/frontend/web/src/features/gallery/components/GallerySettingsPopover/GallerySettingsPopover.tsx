@@ -1,14 +1,26 @@
-import { Divider, Flex, IconButton, Popover, PopoverBody, PopoverContent, PopoverTrigger } from '@invoke-ai/ui-library';
+import {
+  Divider,
+  Flex,
+  IconButton,
+  Popover,
+  PopoverArrow,
+  PopoverBody,
+  PopoverContent,
+  PopoverTrigger,
+  Portal,
+  Text,
+} from '@invoke-ai/ui-library';
 import AlwaysShowImageSizeCheckbox from 'features/gallery/components/GallerySettingsPopover/AlwaysShowImageSizeCheckbox';
 import AutoSwitchCheckbox from 'features/gallery/components/GallerySettingsPopover/AutoSwitchCheckbox';
 import ImageMinimumWidthSlider from 'features/gallery/components/GallerySettingsPopover/ImageMinimumWidthSlider';
 import ShowStarredFirstCheckbox from 'features/gallery/components/GallerySettingsPopover/ShowStarredFirstCheckbox';
 import SortDirectionCombobox from 'features/gallery/components/GallerySettingsPopover/SortDirectionCombobox';
+import UsePagedGalleryViewCheckbox from 'features/gallery/components/GallerySettingsPopover/UsePagedGalleryViewCheckbox';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PiGearSixFill } from 'react-icons/pi';
 
-const GallerySettingsPopover = () => {
+export const GallerySettingsPopover = memo(() => {
   const { t } = useTranslation();
 
   return (
@@ -23,20 +35,31 @@ const GallerySettingsPopover = () => {
           tooltip={t('gallery.imagesSettings')}
         />
       </PopoverTrigger>
-      <PopoverContent>
-        <PopoverBody>
-          <Flex direction="column" gap={2}>
-            <ImageMinimumWidthSlider />
-            <AutoSwitchCheckbox />
-            <AlwaysShowImageSizeCheckbox />
-            <Divider pt={2} />
-            <ShowStarredFirstCheckbox />
-            <SortDirectionCombobox />
-          </Flex>
-        </PopoverBody>
-      </PopoverContent>
+      <Portal>
+        <PopoverContent>
+          <PopoverArrow />
+          <PopoverBody>
+            <Flex direction="column" gap={2}>
+              <Text fontWeight="semibold" color="base.300">
+                {t('gallery.gallerySettings')}
+              </Text>
+
+              <Divider />
+
+              <ImageMinimumWidthSlider />
+              <UsePagedGalleryViewCheckbox />
+              <AutoSwitchCheckbox />
+              <AlwaysShowImageSizeCheckbox />
+
+              <Divider />
+
+              <ShowStarredFirstCheckbox />
+              <SortDirectionCombobox />
+            </Flex>
+          </PopoverBody>
+        </PopoverContent>
+      </Portal>
     </Popover>
   );
-};
-
-export default memo(GallerySettingsPopover);
+});
+GallerySettingsPopover.displayName = 'GallerySettingsPopover';

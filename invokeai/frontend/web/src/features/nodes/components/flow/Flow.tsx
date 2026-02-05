@@ -4,7 +4,6 @@ import type {
   EdgeChange,
   HandleType,
   NodeChange,
-  NodeMouseHandler,
   OnEdgesChange,
   OnInit,
   OnMoveEnd,
@@ -14,15 +13,18 @@ import type {
   ReactFlowProps,
   ReactFlowState,
 } from '@xyflow/react';
-import { Background, ReactFlow, useStore as useReactFlowStore, useUpdateNodeInternals } from '@xyflow/react';
+import {
+  Background,
+  ReactFlow,
+  SelectionMode,
+  useStore as useReactFlowStore,
+  useUpdateNodeInternals,
+} from '@xyflow/react';
 import { useAppDispatch, useAppSelector, useAppStore } from 'app/store/storeHooks';
 import { useFocusRegion, useIsRegionFocused } from 'common/hooks/focus';
-import { $isSelectingOutputNode, $outputNodeId } from 'features/nodes/components/sidePanel/workflow/publish';
 import { useConnection } from 'features/nodes/hooks/useConnection';
 import { useIsValidConnection } from 'features/nodes/hooks/useIsValidConnection';
-import { useIsWorkflowEditorLocked } from 'features/nodes/hooks/useIsWorkflowEditorLocked';
 import { useNodeCopyPaste } from 'features/nodes/hooks/useNodeCopyPaste';
-import { useSyncExecutionState } from 'features/nodes/hooks/useNodeExecutionState';
 import {
   $addNodeCmdk,
   $cursorPos,
@@ -47,7 +49,7 @@ import {
 import { connectionToEdge } from 'features/nodes/store/util/reactFlowUtil';
 import { selectSelectionMode, selectShouldSnapToGrid } from 'features/nodes/store/workflowSettingsSlice';
 import { NO_DRAG_CLASS, NO_PAN_CLASS, NO_WHEEL_CLASS } from 'features/nodes/types/constants';
-import { type AnyEdge, type AnyNode, isInvocationNode } from 'features/nodes/types/invocation';
+import type { AnyEdge, AnyNode } from 'features/nodes/types/invocation';
 import { useRegisteredHotkeys } from 'features/system/components/HotkeysModal/useHotkeyData';
 import type { CSSProperties, MouseEvent } from 'react';
 import { memo, useCallback, useMemo, useRef } from 'react';
@@ -83,23 +85,15 @@ export const Flow = memo(() => {
   const nodes = useAppSelector(selectNodes);
   const edges = useAppSelector(selectEdges);
   const viewport = useStore($viewport);
-  const needsFit = useStore($needsFit);
-  const mayUndo = useAppSelector(selectMayUndo);
-  const mayRedo = useAppSelector(selectMayRedo);
   const shouldSnapToGrid = useAppSelector(selectShouldSnapToGrid);
   const selectionMode = useAppSelector(selectSelectionMode);
   const { onConnectStart, onConnect, onConnectEnd } = useConnection();
   const flowWrapper = useRef<HTMLDivElement>(null);
   const isValidConnection = useIsValidConnection();
-  const cancelConnection = useReactFlowStore(selectCancelConnection);
   const updateNodeInternals = useUpdateNodeInternals();
-  const store = useAppStore();
-  const isWorkflowsFocused = useIsRegionFocused('workflows');
-  const isLocked = useIsWorkflowEditorLocked();
 
   useFocusRegion('workflows', flowWrapper);
 
-  useSyncExecutionState();
   const [borderRadius] = useToken('radii', ['base']);
   const flowStyles = useMemo<CSSProperties>(() => ({ borderRadius }), [borderRadius]);
 
@@ -110,12 +104,12 @@ export const Flow = memo(() => {
       if (!flow) {
         return;
       }
-      if (needsFit) {
+      if ($needsFit.get()) {
         $needsFit.set(false);
         flow.fitView();
       }
     },
-    [dispatch, needsFit]
+    [dispatch]
   );
 
   const onEdgesChange: OnEdgesChange<AnyEdge> = useCallback(
@@ -214,13 +208,69 @@ export const Flow = memo(() => {
 
   // #endregion
 
+  return (
+    <>
+      <ReactFlow<AnyNode, AnyEdge>
+        id="workflow-editor"
+        ref={flowWrapper}
+        defaultViewport={viewport}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        nodes={nodes}
+        edges={edges}
+        onInit={onInit}
+        onMouseMove={onMouseMove}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onReconnect={onReconnect}
+        onReconnectStart={onReconnectStart}
+        onReconnectEnd={onReconnectEnd}
+        onConnectStart={onConnectStart}
+        onConnect={onConnect}
+        onConnectEnd={onConnectEnd}
+        onMoveEnd={handleMoveEnd}
+        connectionLineComponent={CustomConnectionLine}
+        isValidConnection={isValidConnection}
+        minZoom={0.1}
+        snapToGrid={shouldSnapToGrid}
+        snapGrid={snapGrid}
+        connectionRadius={30}
+        proOptions={proOptions}
+        style={flowStyles}
+        onPaneClick={handlePaneClick}
+        deleteKeyCode={null}
+        selectionMode={selectionMode === 'full' ? SelectionMode.Full : SelectionMode.Partial}
+        elevateEdgesOnSelect
+        nodeDragThreshold={1}
+        noDragClassName={NO_DRAG_CLASS}
+        noWheelClassName={NO_WHEEL_CLASS}
+        noPanClassName={NO_PAN_CLASS}
+      >
+        <Background gap={snapGrid} offset={snapGrid} />
+      </ReactFlow>
+      <HotkeyIsolator />
+    </>
+  );
+});
+
+Flow.displayName = 'Flow';
+
+const HotkeyIsolator = memo(() => {
+  const mayUndo = useAppSelector(selectMayUndo);
+  const mayRedo = useAppSelector(selectMayRedo);
+
+  const cancelConnection = useReactFlowStore(selectCancelConnection);
+
+  const store = useAppStore();
+  const isWorkflowsFocused = useIsRegionFocused('workflows');
+
   const { copySelection, pasteSelection, pasteSelectionWithEdges } = useNodeCopyPaste();
 
   useRegisteredHotkeys({
     id: 'copySelection',
     category: 'workflows',
     callback: copySelection,
-    options: { enabled: isWorkflowsFocused && !isLocked, preventDefault: true },
+    options: { enabled: isWorkflowsFocused, preventDefault: true },
     dependencies: [copySelection],
   });
 
@@ -239,54 +289,54 @@ export const Flow = memo(() => {
       }
     });
     if (nodeChanges.length > 0) {
-      dispatch(nodesChanged(nodeChanges));
+      store.dispatch(nodesChanged(nodeChanges));
     }
     if (edgeChanges.length > 0) {
-      dispatch(edgesChanged(edgeChanges));
+      store.dispatch(edgesChanged(edgeChanges));
     }
-  }, [dispatch, store]);
+  }, [store]);
   useRegisteredHotkeys({
     id: 'selectAll',
     category: 'workflows',
     callback: selectAll,
-    options: { enabled: isWorkflowsFocused && !isLocked, preventDefault: true },
-    dependencies: [selectAll, isWorkflowsFocused, isLocked],
+    options: { enabled: isWorkflowsFocused, preventDefault: true },
+    dependencies: [selectAll, isWorkflowsFocused],
   });
 
   useRegisteredHotkeys({
     id: 'pasteSelection',
     category: 'workflows',
     callback: pasteSelection,
-    options: { enabled: isWorkflowsFocused && !isLocked, preventDefault: true },
-    dependencies: [pasteSelection, isLocked, isWorkflowsFocused],
+    options: { enabled: isWorkflowsFocused, preventDefault: true },
+    dependencies: [pasteSelection, isWorkflowsFocused],
   });
 
   useRegisteredHotkeys({
     id: 'pasteSelectionWithEdges',
     category: 'workflows',
     callback: pasteSelectionWithEdges,
-    options: { enabled: isWorkflowsFocused && !isLocked, preventDefault: true },
-    dependencies: [pasteSelectionWithEdges, isLocked, isWorkflowsFocused],
+    options: { enabled: isWorkflowsFocused, preventDefault: true },
+    dependencies: [pasteSelectionWithEdges, isWorkflowsFocused],
   });
 
   useRegisteredHotkeys({
     id: 'undo',
     category: 'workflows',
     callback: () => {
-      dispatch(undo());
+      store.dispatch(undo());
     },
-    options: { enabled: isWorkflowsFocused && !isLocked && mayUndo, preventDefault: true },
-    dependencies: [mayUndo, isLocked, isWorkflowsFocused],
+    options: { enabled: isWorkflowsFocused && mayUndo, preventDefault: true },
+    dependencies: [store, mayUndo, isWorkflowsFocused],
   });
 
   useRegisteredHotkeys({
     id: 'redo',
     category: 'workflows',
     callback: () => {
-      dispatch(redo());
+      store.dispatch(redo());
     },
-    options: { enabled: isWorkflowsFocused && !isLocked && mayRedo, preventDefault: true },
-    dependencies: [mayRedo, isLocked, isWorkflowsFocused],
+    options: { enabled: isWorkflowsFocused && mayRedo, preventDefault: true },
+    dependencies: [store, mayRedo, isWorkflowsFocused],
   });
 
   const onEscapeHotkey = useCallback(() => {
@@ -313,79 +363,20 @@ export const Flow = memo(() => {
         edgeChanges.push({ type: 'remove', id });
       });
     if (nodeChanges.length > 0) {
-      dispatch(nodesChanged(nodeChanges));
+      store.dispatch(nodesChanged(nodeChanges));
     }
     if (edgeChanges.length > 0) {
-      dispatch(edgesChanged(edgeChanges));
+      store.dispatch(edgesChanged(edgeChanges));
     }
-  }, [dispatch, store]);
+  }, [store]);
   useRegisteredHotkeys({
     id: 'deleteSelection',
     category: 'workflows',
     callback: deleteSelection,
-    options: { preventDefault: true, enabled: isWorkflowsFocused && !isLocked },
-    dependencies: [deleteSelection, isWorkflowsFocused, isLocked],
+    options: { preventDefault: true, enabled: isWorkflowsFocused },
+    dependencies: [deleteSelection, isWorkflowsFocused],
   });
 
-  const onNodeClick = useCallback<NodeMouseHandler<AnyNode>>((e, node) => {
-    if (!$isSelectingOutputNode.get()) {
-      return;
-    }
-    if (!isInvocationNode(node)) {
-      return;
-    }
-    const { id } = node.data;
-    $outputNodeId.set(id);
-    $isSelectingOutputNode.set(false);
-  }, []);
-
-  return (
-    <ReactFlow<AnyNode, AnyEdge>
-      id="workflow-editor"
-      ref={flowWrapper}
-      defaultViewport={viewport}
-      nodeTypes={nodeTypes}
-      edgeTypes={edgeTypes}
-      nodes={nodes}
-      edges={edges}
-      onInit={onInit}
-      onNodeClick={onNodeClick}
-      onMouseMove={onMouseMove}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
-      onReconnect={onReconnect}
-      onReconnectStart={onReconnectStart}
-      onReconnectEnd={onReconnectEnd}
-      onConnectStart={onConnectStart}
-      onConnect={onConnect}
-      onConnectEnd={onConnectEnd}
-      onMoveEnd={handleMoveEnd}
-      connectionLineComponent={CustomConnectionLine}
-      isValidConnection={isValidConnection}
-      edgesFocusable={!isLocked}
-      edgesReconnectable={!isLocked}
-      nodesDraggable={!isLocked}
-      nodesConnectable={!isLocked}
-      nodesFocusable={!isLocked}
-      elementsSelectable={!isLocked}
-      minZoom={0.1}
-      snapToGrid={shouldSnapToGrid}
-      snapGrid={snapGrid}
-      connectionRadius={30}
-      proOptions={proOptions}
-      style={flowStyles}
-      onPaneClick={handlePaneClick}
-      deleteKeyCode={null}
-      selectionMode={selectionMode}
-      elevateEdgesOnSelect
-      nodeDragThreshold={1}
-      noDragClassName={NO_DRAG_CLASS}
-      noWheelClassName={NO_WHEEL_CLASS}
-      noPanClassName={NO_PAN_CLASS}
-    >
-      <Background />
-    </ReactFlow>
-  );
+  return null;
 });
-
-Flow.displayName = 'Flow';
+HotkeyIsolator.displayName = 'HotkeyIsolator';

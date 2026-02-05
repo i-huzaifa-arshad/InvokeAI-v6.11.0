@@ -1,59 +1,73 @@
+import { objectEquals } from '@observ33r/object-equals';
 import type { RootState } from 'app/store/store';
 import type { CanvasManager } from 'features/controlLayers/konva/CanvasManager';
 import { getPrefixedId } from 'features/controlLayers/konva/util';
 import { selectCanvasSettingsSlice } from 'features/controlLayers/store/canvasSettingsSlice';
 import { selectParamsSlice } from 'features/controlLayers/store/paramsSlice';
-import { selectCanvasSlice } from 'features/controlLayers/store/selectors';
-import type { Dimensions } from 'features/controlLayers/store/types';
 import type { Graph } from 'features/nodes/util/graph/generation/Graph';
-import { isMainModelWithoutUnet } from 'features/nodes/util/graph/graphBuilderUtils';
+import {
+  getDenoisingStartAndEnd,
+  getOriginalAndScaledSizesForOtherModes,
+  isMainModelWithoutUnet,
+} from 'features/nodes/util/graph/graphBuilderUtils';
 import type {
   DenoiseLatentsNodes,
   LatentToImageNodes,
   MainModelLoaderNodes,
   VaeSourceNodes,
 } from 'features/nodes/util/graph/types';
-import { isEqual } from 'lodash-es';
 import type { ImageDTO, Invocation } from 'services/api/types';
+import { assert } from 'tsafe';
 
 type AddInpaintArg = {
-  state: RootState;
   g: Graph;
+  state: RootState;
   manager: CanvasManager;
   l2i: Invocation<LatentToImageNodes>;
-  i2lNodeType: 'i2l' | 'flux_vae_encode' | 'sd3_i2l' | 'cogview4_i2l';
+  i2l: Invocation<'i2l' | 'flux_vae_encode' | 'flux2_vae_encode' | 'sd3_i2l' | 'cogview4_i2l' | 'z_image_i2l'>;
+  noise?: Invocation<'noise'>;
   denoise: Invocation<DenoiseLatentsNodes>;
   vaeSource: Invocation<VaeSourceNodes | MainModelLoaderNodes>;
   modelLoader: Invocation<MainModelLoaderNodes>;
-  originalSize: Dimensions;
-  scaledSize: Dimensions;
-  denoising_start: number;
-  fp32: boolean;
-  seed: number;
+  seed: Invocation<'integer'>;
 };
 
 export const addInpaint = async ({
-  state,
   g,
+  state,
   manager,
   l2i,
-  i2lNodeType,
+  i2l,
+  noise,
   denoise,
   vaeSource,
   modelLoader,
-  originalSize,
-  scaledSize,
-  denoising_start,
-  fp32,
   seed,
 }: AddInpaintArg): Promise<Invocation<'invokeai_img_blend' | 'apply_mask_to_image'>> => {
+  const { denoising_start, denoising_end } = getDenoisingStartAndEnd(state);
   denoise.denoising_start = denoising_start;
+  denoise.denoising_end = denoising_end;
 
   const params = selectParamsSlice(state);
   const canvasSettings = selectCanvasSettingsSlice(state);
-  const canvas = selectCanvasSlice(state);
 
-  const { rect } = canvas.bbox;
+  const { originalSize, scaledSize, rect } = getOriginalAndScaledSizesForOtherModes(state);
+
+  if (
+    denoise.type === 'cogview4_denoise' ||
+    denoise.type === 'flux_denoise' ||
+    denoise.type === 'flux2_denoise' ||
+    denoise.type === 'sd3_denoise' ||
+    denoise.type === 'z_image_denoise'
+  ) {
+    denoise.width = scaledSize.width;
+    denoise.height = scaledSize.height;
+  } else {
+    assert(denoise.type === 'denoise_latents');
+    assert(noise, 'SD1.5/SD2/SDXL graphs require a noise node to be passed in');
+    noise.width = scaledSize.width;
+    noise.height = scaledSize.height;
+  }
 
   const rasterAdapters = manager.compositor.getVisibleAdaptersOfType('raster_layer');
   const initialImage = await manager.compositor.getCompositeImageDTO(rasterAdapters, rect, {
@@ -93,17 +107,10 @@ export const addInpaint = async ({
     }
   );
 
-  const needsScaleBeforeProcessing = !isEqual(scaledSize, originalSize);
+  const needsScaleBeforeProcessing = !objectEquals(scaledSize, originalSize);
 
   if (needsScaleBeforeProcessing) {
     // Scale before processing requires some resizing
-    const i2l = g.addNode({
-      id: i2lNodeType,
-      type: i2lNodeType,
-      image: initialImage.image_name ? { image_name: initialImage.image_name } : undefined,
-      ...(i2lNodeType === 'i2l' ? { fp32 } : {}),
-    });
-
     const resizeImageToScaledSize = g.addNode({
       type: 'img_resize',
       id: getPrefixedId('resize_image_to_scaled_size'),
@@ -128,9 +135,9 @@ export const addInpaint = async ({
         noise_type: 'gaussian',
         amount: 1.0, // the mask controls the actual intensity
         noise_color: true,
-        seed: seed,
       });
 
+      g.addEdge(seed, 'value', noiseNode, 'seed');
       g.addEdge(resizeImageToScaledSize, 'image', noiseNode, 'image');
       g.addEdge(resizeNoiseMaskToScaledSize, 'image', noiseNode, 'mask');
       g.addEdge(noiseNode, 'image', i2l, 'image');
@@ -160,7 +167,7 @@ export const addInpaint = async ({
       coherence_mode: params.canvasCoherenceMode,
       minimum_denoise: params.canvasCoherenceMinDenoise,
       edge_radius: params.canvasCoherenceEdgeSize,
-      fp32,
+      fp32: i2l.type === 'i2l' ? i2l.fp32 : false,
     });
     const expandMask = g.addNode({
       type: 'expand_mask_with_fade',
@@ -185,9 +192,8 @@ export const addInpaint = async ({
     g.addEdge(expandMask, 'image', resizeMaskToOriginalSize, 'image');
 
     // After denoising, resize the image and mask back to original size
-    // Do the paste back if we are sending to gallery (in which case we want to see the full image), or if we are sending
-    // to canvas but not outputting only masked regions
-    if (!canvasSettings.sendToCanvas || !canvasSettings.outputOnlyMaskedRegions) {
+    // Do the paste back if we are not outputting only masked regions
+    if (!canvasSettings.outputOnlyMaskedRegions) {
       const imageLayerBlend = g.addNode({
         type: 'invokeai_img_blend',
         id: getPrefixedId('image_layer_blend'),
@@ -209,12 +215,6 @@ export const addInpaint = async ({
     }
   } else {
     // No scale before processing, much simpler
-    const i2l = g.addNode({
-      id: i2lNodeType,
-      type: i2lNodeType,
-      image: initialImage.image_name ? { image_name: initialImage.image_name } : undefined,
-      ...(i2lNodeType === 'i2l' ? { fp32 } : {}),
-    });
 
     // If we have a noise mask, apply it to the input image before i2l conversion
     if (noiseMaskImage) {
@@ -222,15 +222,21 @@ export const addInpaint = async ({
       const noiseNode = g.addNode({
         type: 'img_noise',
         id: getPrefixedId('add_inpaint_noise'),
-        image: initialImage.image_name ? { image_name: initialImage.image_name } : undefined,
+        image: {
+          image_name: initialImage.image_name,
+        },
         noise_type: 'gaussian',
         amount: 1.0, // the mask controls the actual intensity
         noise_color: true,
-        seed: seed,
-        mask: { image_name: noiseMaskImage.image_name },
+        mask: {
+          image_name: noiseMaskImage.image_name,
+        },
       });
 
+      g.addEdge(seed, 'value', noiseNode, 'seed');
       g.addEdge(noiseNode, 'image', i2l, 'image');
+    } else {
+      i2l.image = { image_name: initialImage.image_name };
     }
 
     const createGradientMask = g.addNode({
@@ -239,7 +245,7 @@ export const addInpaint = async ({
       coherence_mode: params.canvasCoherenceMode,
       minimum_denoise: params.canvasCoherenceMinDenoise,
       edge_radius: params.canvasCoherenceEdgeSize,
-      fp32,
+      fp32: i2l.type === 'i2l' ? i2l.fp32 : false,
       image: { image_name: initialImage.image_name },
       mask: { image_name: maskImage.image_name },
     });
@@ -259,9 +265,8 @@ export const addInpaint = async ({
     });
     g.addEdge(createGradientMask, 'expanded_mask_area', expandMask, 'mask');
 
-    // Do the paste back if we are sending to gallery (in which case we want to see the full image), or if we are sending
-    // to canvas but not outputting only masked regions
-    if (!canvasSettings.sendToCanvas || !canvasSettings.outputOnlyMaskedRegions) {
+    // Do the paste back if we are not outputting only masked regions
+    if (!canvasSettings.outputOnlyMaskedRegions) {
       const imageLayerBlend = g.addNode({
         type: 'invokeai_img_blend',
         id: getPrefixedId('image_layer_blend'),

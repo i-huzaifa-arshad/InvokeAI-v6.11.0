@@ -1,5 +1,5 @@
-import { useAppStore } from 'app/store/nanostores/store';
-import { useAppSelector } from 'app/store/storeHooks';
+import { useAppSelector, useAppStore } from 'app/store/storeHooks';
+import { debounce } from 'es-toolkit/compat';
 import {
   isErrorChanged,
   isLoadingChanged,
@@ -9,8 +9,6 @@ import {
 } from 'features/dynamicPrompts/store/dynamicPromptsSlice';
 import { getShouldProcessPrompt } from 'features/dynamicPrompts/util/getShouldProcessPrompt';
 import { selectPresetModifiedPrompts } from 'features/nodes/util/graph/graphBuilderUtils';
-import { useFeatureStatus } from 'features/system/hooks/useFeatureStatus';
-import { debounce } from 'lodash-es';
 import { useEffect, useMemo } from 'react';
 import { utilitiesApi } from 'services/api/endpoints/utilities';
 
@@ -24,8 +22,6 @@ export const useDynamicPromptsWatcher = () => {
   // The prompt to process is derived from the preset-modified prompts
   const presetModifiedPrompts = useAppSelector(selectPresetModifiedPrompts);
   const maxPrompts = useAppSelector(selectDynamicPromptsMaxPrompts);
-
-  const dynamicPrompting = useFeatureStatus('dynamicPrompting');
 
   const debouncedUpdateDynamicPrompts = useMemo(
     () =>
@@ -56,17 +52,11 @@ export const useDynamicPromptsWatcher = () => {
   );
 
   useEffect(() => {
-    if (!dynamicPrompting) {
-      return;
-    }
-
-    const { positivePrompt } = presetModifiedPrompts;
-
     // Before we execute, imperatively check the dynamic prompts query cache to see if we have already fetched this prompt
     const state = getState();
 
     const cachedPrompts = utilitiesApi.endpoints.dynamicPrompts.select({
-      prompt: positivePrompt,
+      prompt: presetModifiedPrompts.positive,
       max_prompts: maxPrompts,
     })(state).data;
 
@@ -78,8 +68,8 @@ export const useDynamicPromptsWatcher = () => {
     }
 
     // If the prompt is not in the cache, check if we should process it - this is just looking for dynamic prompts syntax
-    if (!getShouldProcessPrompt(positivePrompt)) {
-      dispatch(promptsChanged([positivePrompt]));
+    if (!getShouldProcessPrompt(presetModifiedPrompts.positive)) {
+      dispatch(promptsChanged([presetModifiedPrompts.positive]));
       dispatch(parsingErrorChanged(undefined));
       dispatch(isErrorChanged(false));
       return;
@@ -90,6 +80,6 @@ export const useDynamicPromptsWatcher = () => {
       dispatch(isLoadingChanged(true));
     }
 
-    debouncedUpdateDynamicPrompts(positivePrompt, maxPrompts);
-  }, [debouncedUpdateDynamicPrompts, dispatch, dynamicPrompting, getState, maxPrompts, presetModifiedPrompts]);
+    debouncedUpdateDynamicPrompts(presetModifiedPrompts.positive, maxPrompts);
+  }, [debouncedUpdateDynamicPrompts, dispatch, getState, maxPrompts, presetModifiedPrompts]);
 };

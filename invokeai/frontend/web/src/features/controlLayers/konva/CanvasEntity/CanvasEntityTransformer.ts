@@ -1,10 +1,12 @@
 import { Mutex } from 'async-mutex';
 import { withResult, withResultAsync } from 'common/util/result';
 import { roundToMultiple } from 'common/util/roundDownToMultiple';
+import { clamp, debounce, get } from 'es-toolkit/compat';
 import type { CanvasEntityAdapter } from 'features/controlLayers/konva/CanvasEntity/types';
 import type { CanvasManager } from 'features/controlLayers/konva/CanvasManager';
 import { CanvasModuleBase } from 'features/controlLayers/konva/CanvasModuleBase';
 import {
+  areStageAttrsGonnaExplode,
   canvasToImageData,
   getEmptyRect,
   getKonvaNodeDebugAttrs,
@@ -12,15 +14,19 @@ import {
   offsetCoord,
   roundRect,
 } from 'features/controlLayers/konva/util';
+import type { TransformSmoothingMode } from 'features/controlLayers/store/canvasSettingsSlice';
 import { selectSelectedEntityIdentifier } from 'features/controlLayers/store/selectors';
 import type { Coordinate, LifecycleCallback, Rect, RectWithRotation } from 'features/controlLayers/store/types';
+import { imageDTOToImageObject } from 'features/controlLayers/store/util';
+import { Graph } from 'features/nodes/util/graph/generation/Graph';
 import { toast } from 'features/toast/toast';
 import Konva from 'konva';
 import type { GroupConfig } from 'konva/lib/Group';
-import { clamp, debounce, get } from 'lodash-es';
 import { atom } from 'nanostores';
 import type { Logger } from 'roarr';
 import { serializeError } from 'serialize-error';
+import { uploadImage } from 'services/api/endpoints/images';
+import type { ImageDTO } from 'services/api/types';
 import { assert } from 'tsafe';
 
 type CanvasEntityTransformerConfig = {
@@ -88,6 +94,8 @@ const DEFAULT_CONFIG: CanvasEntityTransformerConfig = {
   ROTATE_ANCHOR_STROKE_COLOR: 'hsl(200 76% 40% / 1)', // invokeBlue.700
   ROTATE_ANCHOR_SIZE: 12,
 };
+
+const TRANSFORM_SMOOTHING_PIXEL_RATIO = 2;
 
 export class CanvasEntityTransformer extends CanvasModuleBase {
   readonly type = 'entity_transformer';
@@ -266,6 +274,9 @@ export class CanvasEntityTransformer extends CanvasModuleBase {
     // the bbox outline should always be 1 screen pixel wide, so we need to update its stroke width.
     this.subscriptions.add(
       this.manager.stage.$stageAttrs.listen((newVal, oldVal) => {
+        if (areStageAttrsGonnaExplode(newVal)) {
+          return;
+        }
         if (newVal.scale !== oldVal.scale) {
           this.syncScale();
         }
@@ -478,13 +489,24 @@ export class CanvasEntityTransformer extends CanvasModuleBase {
     // "contain" means that the entity should be scaled to fit within the bbox, but it should not exceed the bbox.
     const scale = Math.min(scaleX, scaleY);
 
-    // Center the shape within the bounding box
-    const offsetX = (rect.width - width * scale) / 2;
-    const offsetY = (rect.height - height * scale) / 2;
+    // Calculate the scaled dimensions
+    const scaledWidth = width * scale;
+    const scaledHeight = height * scale;
+
+    // Calculate centered position
+    const centerX = rect.x + (rect.width - scaledWidth) / 2;
+    const centerY = rect.y + (rect.height - scaledHeight) / 2;
+
+    // Round to grid and clamp to valid bounds
+    const roundedX = gridSize > 1 ? roundToMultiple(centerX, gridSize) : centerX;
+    const roundedY = gridSize > 1 ? roundToMultiple(centerY, gridSize) : centerY;
+
+    const x = clamp(roundedX, rect.x, rect.x + rect.width - scaledWidth);
+    const y = clamp(roundedY, rect.y, rect.y + rect.height - scaledHeight);
 
     this.konva.proxyRect.setAttrs({
-      x: clamp(roundToMultiple(rect.x + offsetX, gridSize), rect.x, rect.x + rect.width),
-      y: clamp(roundToMultiple(rect.y + offsetY, gridSize), rect.y, rect.y + rect.height),
+      x,
+      y,
       scaleX: scale,
       scaleY: scale,
       rotation: 0,
@@ -509,16 +531,32 @@ export class CanvasEntityTransformer extends CanvasModuleBase {
     const scaleX = rect.width / width;
     const scaleY = rect.height / height;
 
-    // "cover" is the same as "contain", but we choose the larger scale to cover the shape
+    // "cover" means the entity should cover the entire bbox, potentially overflowing
     const scale = Math.max(scaleX, scaleY);
 
-    // Center the shape within the bounding box
-    const offsetX = (rect.width - width * scale) / 2;
-    const offsetY = (rect.height - height * scale) / 2;
+    // Calculate the scaled dimensions
+    const scaledWidth = width * scale;
+    const scaledHeight = height * scale;
+
+    // Calculate position - center only if entity exceeds bbox
+    let x = rect.x;
+    let y = rect.y;
+
+    // If scaled width exceeds bbox width, center horizontally
+    if (scaledWidth > rect.width) {
+      const centerX = rect.x + (rect.width - scaledWidth) / 2;
+      x = gridSize > 1 ? roundToMultiple(centerX, gridSize) : centerX;
+    }
+
+    // If scaled height exceeds bbox height, center vertically
+    if (scaledHeight > rect.height) {
+      const centerY = rect.y + (rect.height - scaledHeight) / 2;
+      y = gridSize > 1 ? roundToMultiple(centerY, gridSize) : centerY;
+    }
 
     this.konva.proxyRect.setAttrs({
-      x: roundToMultiple(rect.x + offsetX, gridSize),
-      y: roundToMultiple(rect.y + offsetY, gridSize),
+      x,
+      y,
       scaleX: scale,
       scaleY: scale,
       rotation: 0,
@@ -776,21 +814,103 @@ export class CanvasEntityTransformer extends CanvasModuleBase {
     this.log.debug('Applying transform');
     this.$isProcessing.set(true);
     this._setInteractionMode('off');
-    const rect = this.getRelativeRect();
-    const rasterizeResult = await withResultAsync(() =>
-      this.parent.renderer.rasterize({
-        rect: roundRect(rect),
-        replaceObjects: true,
-        ignoreCache: true,
+    const rect = roundRect(this.getRelativeRect());
+    const { transformSmoothingEnabled, transformSmoothingMode } = this.manager.stateApi.getSettings();
+    if (!transformSmoothingEnabled) {
+      const rasterizeResult = await withResultAsync(() =>
+        this.parent.renderer.rasterize({
+          rect,
+          replaceObjects: true,
+          ignoreCache: true,
+          attrs: { opacity: 1, filters: [] },
+        })
+      );
+      if (rasterizeResult.isErr()) {
+        toast({ status: 'error', title: 'Failed to apply transform' });
+        this.log.error({ error: serializeError(rasterizeResult.error) }, 'Failed to rasterize entity');
+      }
+      this.requestRectCalculation();
+      this.stopTransform();
+      return;
+    }
+
+    const rasterizeResult = await withResultAsync(async () => {
+      const blob = await this.parent.renderer.getBlob({
+        rect,
         attrs: { opacity: 1, filters: [] },
-      })
-    );
+        imageSmoothingEnabled: true,
+        pixelRatio: TRANSFORM_SMOOTHING_PIXEL_RATIO,
+        cache: {
+          imageSmoothingEnabled: true,
+          pixelRatio: TRANSFORM_SMOOTHING_PIXEL_RATIO,
+        },
+      });
+
+      return await uploadImage({
+        file: new File([blob], `${this.parent.id}_transform.png`, { type: 'image/png' }),
+        image_category: 'other',
+        is_intermediate: true,
+        silent: true,
+      });
+    });
+
     if (rasterizeResult.isErr()) {
       toast({ status: 'error', title: 'Failed to apply transform' });
       this.log.error({ error: serializeError(rasterizeResult.error) }, 'Failed to rasterize entity');
+      this.requestRectCalculation();
+      this.stopTransform();
+      return;
     }
+
+    const resizeResult = await withResultAsync(() =>
+      this.manager.stateApi.runGraphAndReturnImageOutput({
+        ...CanvasEntityTransformer.buildTransformSmoothingGraph(rasterizeResult.value, rect, transformSmoothingMode),
+        options: {
+          prepend: true,
+        },
+      })
+    );
+
+    if (resizeResult.isErr()) {
+      toast({ status: 'error', title: 'Failed to apply transform' });
+      this.log.error({ error: serializeError(resizeResult.error) }, 'Failed to smooth transformed entity');
+      this.requestRectCalculation();
+      this.stopTransform();
+      return;
+    }
+
+    const imageObject = imageDTOToImageObject(resizeResult.value);
+    await this.parent.bufferRenderer.setBuffer(imageObject);
+    this.parent.bufferRenderer.commitBuffer({ pushToState: false });
+    this.manager.stateApi.rasterizeEntity({
+      entityIdentifier: this.parent.entityIdentifier,
+      imageObject,
+      position: {
+        x: rect.x,
+        y: rect.y,
+      },
+      replaceObjects: true,
+    });
     this.requestRectCalculation();
     this.stopTransform();
+  };
+
+  private static buildTransformSmoothingGraph = (
+    imageDTO: ImageDTO,
+    rect: Rect,
+    resampleMode: TransformSmoothingMode
+  ): { graph: Graph; outputNodeId: string } => {
+    const graph = new Graph(getPrefixedId('transform_smoothing'));
+    const outputNodeId = getPrefixedId('transform_smoothing_resize');
+    graph.addNode({
+      id: outputNodeId,
+      type: 'img_resize',
+      image: { image_name: imageDTO.image_name },
+      width: rect.width,
+      height: rect.height,
+      resample_mode: resampleMode,
+    });
+    return { graph, outputNodeId };
   };
 
   resetTransform = () => {

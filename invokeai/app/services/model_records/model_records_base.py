@@ -12,18 +12,20 @@ from pydantic import BaseModel, Field
 
 from invokeai.app.services.shared.pagination import PaginatedResults
 from invokeai.app.util.model_exclude_null import BaseModelExcludeNull
-from invokeai.backend.model_manager.config import (
-    AnyModelConfig,
-    ControlAdapterDefaultSettings,
-    MainModelDefaultSettings,
-)
+from invokeai.backend.model_manager.configs.controlnet import ControlAdapterDefaultSettings
+from invokeai.backend.model_manager.configs.factory import AnyModelConfig
+from invokeai.backend.model_manager.configs.lora import LoraModelDefaultSettings
+from invokeai.backend.model_manager.configs.main import MainModelDefaultSettings
 from invokeai.backend.model_manager.taxonomy import (
     BaseModelType,
     ClipVariantType,
+    Flux2VariantType,
+    FluxVariantType,
     ModelFormat,
     ModelSourceType,
     ModelType,
     ModelVariantType,
+    Qwen3VariantType,
     SchedulerPredictionType,
 )
 
@@ -83,13 +85,16 @@ class ModelRecordChanges(BaseModelExcludeNull):
     file_size: Optional[int] = Field(description="Size of model file", default=None)
     format: Optional[str] = Field(description="format of model file", default=None)
     trigger_phrases: Optional[set[str]] = Field(description="Set of trigger phrases for this model", default=None)
-    default_settings: Optional[MainModelDefaultSettings | ControlAdapterDefaultSettings] = Field(
-        description="Default settings for this model", default=None
+    default_settings: Optional[MainModelDefaultSettings | LoraModelDefaultSettings | ControlAdapterDefaultSettings] = (
+        Field(description="Default settings for this model", default=None)
     )
+    cpu_only: Optional[bool] = Field(description="Whether this model should run on CPU only", default=None)
 
     # Checkpoint-specific changes
     # TODO(MM2): Should we expose these? Feels footgun-y...
-    variant: Optional[ModelVariantType | ClipVariantType] = Field(description="The variant of the model.", default=None)
+    variant: Optional[ModelVariantType | ClipVariantType | FluxVariantType | Flux2VariantType | Qwen3VariantType] = (
+        Field(description="The variant of the model.", default=None)
+    )
     prediction_type: Optional[SchedulerPredictionType] = Field(
         description="The prediction type of the model.", default=None
     )
@@ -125,12 +130,26 @@ class ModelRecordServiceBase(ABC):
         pass
 
     @abstractmethod
-    def update_model(self, key: str, changes: ModelRecordChanges) -> AnyModelConfig:
+    def update_model(self, key: str, changes: ModelRecordChanges, allow_class_change: bool = False) -> AnyModelConfig:
         """
         Update the model, returning the updated version.
 
         :param key: Unique key for the model to be updated.
         :param changes: A set of changes to apply to this model. Changes are validated before being written.
+        :param allow_class_change: If True, allows changes that would change the model config class. For example,
+        changing a LoRA into a Main model. This does not disable validation, so the changes must still be valid.
+        """
+        pass
+
+    @abstractmethod
+    def replace_model(self, key: str, new_config: AnyModelConfig) -> AnyModelConfig:
+        """
+        Replace the model record entirely, returning the new record.
+
+        This is used when we re-identify a model and have a new config object.
+
+        :param key: Unique key for the model to be updated.
+        :param new_config: The new model config to write.
         """
         pass
 

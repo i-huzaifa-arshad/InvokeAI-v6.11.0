@@ -2,32 +2,28 @@ import type { ButtonProps } from '@invoke-ai/ui-library';
 import { Button } from '@invoke-ai/ui-library';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { PiTrashSimpleFill } from 'react-icons/pi';
+import { PiTrashBold } from 'react-icons/pi';
 
 import { useClearQueueDialog } from './ClearQueueConfirmationAlertDialog';
 
-type Props = ButtonProps;
-
-const ClearQueueButton = (props: Props) => {
+export const ClearQueueButton = memo((props: ButtonProps) => {
   const { t } = useTranslation();
-  const clearQueue = useClearQueueDialog();
+  const api = useClearQueueDialog();
 
   return (
-    <>
-      <Button
-        isDisabled={clearQueue.isDisabled}
-        isLoading={clearQueue.isLoading}
-        tooltip={t('queue.clearTooltip')}
-        leftIcon={<PiTrashSimpleFill />}
-        colorScheme="error"
-        onClick={clearQueue.openDialog}
-        data-testid={t('queue.clear')}
-        {...props}
-      >
-        {t('queue.clear')}
-      </Button>
-    </>
+    <Button
+      isDisabled={api.isDisabled}
+      isLoading={api.isLoading}
+      aria-label={t('queue.clear')}
+      tooltip={t('queue.clearTooltip')}
+      leftIcon={<PiTrashBold />}
+      colorScheme="error"
+      onClick={api.openDialog}
+      {...props}
+    >
+      {t('queue.clear')}
+    </Button>
   );
-};
+});
 
-export default memo(ClearQueueButton);
+ClearQueueButton.displayName = 'ClearQueueButton';

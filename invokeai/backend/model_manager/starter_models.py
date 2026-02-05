@@ -23,7 +23,7 @@ class StarterModel(StarterModelWithoutDependencies):
     dependencies: Optional[list[StarterModelWithoutDependencies]] = None
 
 
-class StarterModelBundles(BaseModel):
+class StarterModelBundle(BaseModel):
     name: str
     models: list[StarterModel]
 
@@ -37,16 +37,20 @@ cyberrealistic_negative = StarterModel(
 )
 
 # region CLIP Image Encoders
+
+# This is CLIP-ViT-H-14-laion2B-s32B-b79K
 ip_adapter_sd_image_encoder = StarterModel(
     name="IP Adapter SD1.5 Image Encoder",
-    base=BaseModelType.StableDiffusion1,
+    base=BaseModelType.Any,
     source="InvokeAI/ip_adapter_sd_image_encoder",
     description="IP Adapter SD Image Encoder",
     type=ModelType.CLIPVision,
 )
+
+# This is CLIP-ViT-bigG-14-laion2B-39B-b160k
 ip_adapter_sdxl_image_encoder = StarterModel(
     name="IP Adapter SDXL Image Encoder",
-    base=BaseModelType.StableDiffusionXL,
+    base=BaseModelType.Any,
     source="InvokeAI/ip_adapter_sdxl_image_encoder",
     description="IP Adapter SDXL Image Encoder",
     type=ModelType.CLIPVision,
@@ -109,7 +113,7 @@ flux_vae = StarterModel(
 
 # region: Main
 flux_schnell_quantized = StarterModel(
-    name="FLUX Schnell (Quantized)",
+    name="FLUX.1 schnell (quantized)",
     base=BaseModelType.Flux,
     source="InvokeAI/flux_schnell::transformer/bnb_nf4/flux1-schnell-bnb_nf4.safetensors",
     description="FLUX schnell transformer quantized to bitsandbytes NF4 format. Total size with dependencies: ~12GB",
@@ -117,7 +121,7 @@ flux_schnell_quantized = StarterModel(
     dependencies=[t5_8b_quantized_encoder, flux_vae, clip_l_encoder],
 )
 flux_dev_quantized = StarterModel(
-    name="FLUX Dev (Quantized)",
+    name="FLUX.1 dev (quantized)",
     base=BaseModelType.Flux,
     source="InvokeAI/flux_dev::transformer/bnb_nf4/flux1-dev-bnb_nf4.safetensors",
     description="FLUX dev transformer quantized to bitsandbytes NF4 format. Total size with dependencies: ~12GB",
@@ -125,7 +129,7 @@ flux_dev_quantized = StarterModel(
     dependencies=[t5_8b_quantized_encoder, flux_vae, clip_l_encoder],
 )
 flux_schnell = StarterModel(
-    name="FLUX Schnell",
+    name="FLUX.1 schnell",
     base=BaseModelType.Flux,
     source="InvokeAI/flux_schnell::transformer/base/flux1-schnell.safetensors",
     description="FLUX schnell transformer in bfloat16. Total size with dependencies: ~33GB",
@@ -133,12 +137,44 @@ flux_schnell = StarterModel(
     dependencies=[t5_base_encoder, flux_vae, clip_l_encoder],
 )
 flux_dev = StarterModel(
-    name="FLUX Dev",
+    name="FLUX.1 dev",
     base=BaseModelType.Flux,
     source="InvokeAI/flux_dev::transformer/base/flux1-dev.safetensors",
     description="FLUX dev transformer in bfloat16. Total size with dependencies: ~33GB",
     type=ModelType.Main,
     dependencies=[t5_base_encoder, flux_vae, clip_l_encoder],
+)
+flux_kontext = StarterModel(
+    name="FLUX.1 Kontext dev",
+    base=BaseModelType.Flux,
+    source="https://huggingface.co/black-forest-labs/FLUX.1-Kontext-dev/resolve/main/flux1-kontext-dev.safetensors",
+    description="FLUX.1 Kontext dev transformer in bfloat16. Total size with dependencies: ~33GB",
+    type=ModelType.Main,
+    dependencies=[t5_base_encoder, flux_vae, clip_l_encoder],
+)
+flux_kontext_quantized = StarterModel(
+    name="FLUX.1 Kontext dev (quantized)",
+    base=BaseModelType.Flux,
+    source="https://huggingface.co/unsloth/FLUX.1-Kontext-dev-GGUF/resolve/main/flux1-kontext-dev-Q4_K_M.gguf",
+    description="FLUX.1 Kontext dev quantized (q4_k_m). Total size with dependencies: ~14GB",
+    type=ModelType.Main,
+    dependencies=[t5_8b_quantized_encoder, flux_vae, clip_l_encoder],
+)
+flux_krea = StarterModel(
+    name="FLUX.1 Krea dev",
+    base=BaseModelType.Flux,
+    source="https://huggingface.co/InvokeAI/FLUX.1-Krea-dev/resolve/main/flux1-krea-dev.safetensors",
+    description="FLUX.1 Krea dev. Total size with dependencies: ~33GB",
+    type=ModelType.Main,
+    dependencies=[t5_8b_quantized_encoder, flux_vae, clip_l_encoder],
+)
+flux_krea_quantized = StarterModel(
+    name="FLUX.1 Krea dev (quantized)",
+    base=BaseModelType.Flux,
+    source="https://huggingface.co/InvokeAI/FLUX.1-Krea-dev-GGUF/resolve/main/flux1-krea-dev-Q4_K_M.gguf",
+    description="FLUX.1 Krea dev quantized (q4_k_m). Total size with dependencies: ~14GB",
+    type=ModelType.Main,
+    dependencies=[t5_8b_quantized_encoder, flux_vae, clip_l_encoder],
 )
 sd35_medium = StarterModel(
     name="SD3.5 Medium",
@@ -564,13 +600,14 @@ t2i_sketch_sdxl = StarterModel(
 )
 # endregion
 # region SpandrelImageToImage
-realesrgan_anime = StarterModel(
-    name="RealESRGAN_x4plus_anime_6B",
+animesharp_v4_rcan = StarterModel(
+    name="2x-AnimeSharpV4_RCAN",
     base=BaseModelType.Any,
-    source="https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
-    description="A Real-ESRGAN 4x upscaling model (optimized for anime images).",
+    source="https://github.com/Kim2091/Kim2091-Models/releases/download/2x-AnimeSharpV4/2x-AnimeSharpV4_RCAN.safetensors",
+    description="A 2x upscaling model (optimized for anime images).",
     type=ModelType.SpandrelImageToImage,
 )
+
 realesrgan_x4 = StarterModel(
     name="RealESRGAN_x4plus",
     base=BaseModelType.Any,
@@ -653,9 +690,182 @@ flux_fill = StarterModel(
 )
 # endregion
 
+# region FLUX.2 Klein
+flux2_vae = StarterModel(
+    name="FLUX.2 VAE",
+    base=BaseModelType.Flux2,
+    source="black-forest-labs/FLUX.2-klein-4B::vae",
+    description="FLUX.2 VAE (16-channel, same architecture as FLUX.1 VAE). ~335MB",
+    type=ModelType.VAE,
+)
+
+flux2_klein_qwen3_4b_encoder = StarterModel(
+    name="FLUX.2 Klein Qwen3 4B Encoder",
+    base=BaseModelType.Any,
+    source="black-forest-labs/FLUX.2-klein-4B::text_encoder+tokenizer",
+    description="Qwen3 4B text encoder for FLUX.2 Klein 4B (also compatible with Z-Image). ~8GB",
+    type=ModelType.Qwen3Encoder,
+)
+
+flux2_klein_qwen3_8b_encoder = StarterModel(
+    name="FLUX.2 Klein Qwen3 8B Encoder",
+    base=BaseModelType.Any,
+    source="black-forest-labs/FLUX.2-klein-9B::text_encoder+tokenizer",
+    description="Qwen3 8B text encoder for FLUX.2 Klein 9B models. ~16GB",
+    type=ModelType.Qwen3Encoder,
+)
+
+flux2_klein_4b = StarterModel(
+    name="FLUX.2 Klein 4B (Diffusers)",
+    base=BaseModelType.Flux2,
+    source="black-forest-labs/FLUX.2-klein-4B",
+    description="FLUX.2 Klein 4B in Diffusers format - includes transformer, VAE and Qwen3 encoder. ~10GB",
+    type=ModelType.Main,
+)
+
+flux2_klein_4b_single = StarterModel(
+    name="FLUX.2 Klein 4B",
+    base=BaseModelType.Flux2,
+    source="https://huggingface.co/black-forest-labs/FLUX.2-klein-4B/resolve/main/flux-2-klein-4b.safetensors",
+    description="FLUX.2 Klein 4B standalone transformer. Installs with VAE and Qwen3 4B encoder. ~8GB",
+    type=ModelType.Main,
+    dependencies=[flux2_vae, flux2_klein_qwen3_4b_encoder],
+)
+
+flux2_klein_4b_fp8 = StarterModel(
+    name="FLUX.2 Klein 4B (FP8)",
+    base=BaseModelType.Flux2,
+    source="https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors",
+    description="FLUX.2 Klein 4B FP8 quantized - smaller and faster. Installs with VAE and Qwen3 4B encoder. ~4GB",
+    type=ModelType.Main,
+    dependencies=[flux2_vae, flux2_klein_qwen3_4b_encoder],
+)
+
+flux2_klein_9b = StarterModel(
+    name="FLUX.2 Klein 9B (Diffusers)",
+    base=BaseModelType.Flux2,
+    source="black-forest-labs/FLUX.2-klein-9B",
+    description="FLUX.2 Klein 9B in Diffusers format - includes transformer, VAE and Qwen3 encoder. ~20GB",
+    type=ModelType.Main,
+)
+
+flux2_klein_9b_fp8 = StarterModel(
+    name="FLUX.2 Klein 9B (FP8)",
+    base=BaseModelType.Flux2,
+    source="https://huggingface.co/black-forest-labs/FLUX.2-klein-9b-fp8/resolve/main/flux-2-klein-9b-fp8.safetensors",
+    description="FLUX.2 Klein 9B FP8 quantized - more efficient than full precision. Installs with VAE and Qwen3 8B encoder. ~9.5GB",
+    type=ModelType.Main,
+    dependencies=[flux2_vae, flux2_klein_qwen3_8b_encoder],
+)
+
+flux2_klein_4b_gguf_q4 = StarterModel(
+    name="FLUX.2 Klein 4B (GGUF Q4)",
+    base=BaseModelType.Flux2,
+    source="https://huggingface.co/unsloth/FLUX.2-klein-4B-GGUF/resolve/main/flux-2-klein-4b-Q4_K_M.gguf",
+    description="FLUX.2 Klein 4B GGUF Q4_K_M quantized - runs on 6-8GB VRAM. Installs with VAE and Qwen3 4B encoder. ~2.6GB",
+    type=ModelType.Main,
+    format=ModelFormat.GGUFQuantized,
+    dependencies=[flux2_vae, flux2_klein_qwen3_4b_encoder],
+)
+
+flux2_klein_4b_gguf_q8 = StarterModel(
+    name="FLUX.2 Klein 4B (GGUF Q8)",
+    base=BaseModelType.Flux2,
+    source="https://huggingface.co/unsloth/FLUX.2-klein-4B-GGUF/resolve/main/flux-2-klein-4b-Q8_0.gguf",
+    description="FLUX.2 Klein 4B GGUF Q8_0 quantized - higher quality than Q4. Installs with VAE and Qwen3 4B encoder. ~4.3GB",
+    type=ModelType.Main,
+    format=ModelFormat.GGUFQuantized,
+    dependencies=[flux2_vae, flux2_klein_qwen3_4b_encoder],
+)
+
+flux2_klein_9b_gguf_q4 = StarterModel(
+    name="FLUX.2 Klein 9B (GGUF Q4)",
+    base=BaseModelType.Flux2,
+    source="https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q4_K_M.gguf",
+    description="FLUX.2 Klein 9B GGUF Q4_K_M quantized - runs on 12GB+ VRAM. Installs with VAE and Qwen3 8B encoder. ~5.8GB",
+    type=ModelType.Main,
+    format=ModelFormat.GGUFQuantized,
+    dependencies=[flux2_vae, flux2_klein_qwen3_8b_encoder],
+)
+
+flux2_klein_9b_gguf_q8 = StarterModel(
+    name="FLUX.2 Klein 9B (GGUF Q8)",
+    base=BaseModelType.Flux2,
+    source="https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q8_0.gguf",
+    description="FLUX.2 Klein 9B GGUF Q8_0 quantized - higher quality than Q4. Installs with VAE and Qwen3 8B encoder. ~10GB",
+    type=ModelType.Main,
+    format=ModelFormat.GGUFQuantized,
+    dependencies=[flux2_vae, flux2_klein_qwen3_8b_encoder],
+)
+# endregion
+
+# region Z-Image
+z_image_qwen3_encoder = StarterModel(
+    name="Z-Image Qwen3 Text Encoder",
+    base=BaseModelType.Any,
+    source="Tongyi-MAI/Z-Image-Turbo::text_encoder+tokenizer",
+    description="Qwen3 4B text encoder with tokenizer for Z-Image (full precision). ~8GB",
+    type=ModelType.Qwen3Encoder,
+)
+
+z_image_qwen3_encoder_quantized = StarterModel(
+    name="Z-Image Qwen3 Text Encoder (quantized)",
+    base=BaseModelType.Any,
+    source="https://huggingface.co/worstplayer/Z-Image_Qwen_3_4b_text_encoder_GGUF/resolve/main/Qwen_3_4b-Q6_K.gguf",
+    description="Qwen3 4B text encoder for Z-Image quantized to GGUF Q6_K format. ~3.3GB",
+    type=ModelType.Qwen3Encoder,
+    format=ModelFormat.GGUFQuantized,
+)
+
+z_image_turbo = StarterModel(
+    name="Z-Image Turbo",
+    base=BaseModelType.ZImage,
+    source="Tongyi-MAI/Z-Image-Turbo",
+    description="Z-Image Turbo - fast 6B parameter text-to-image model with 8 inference steps. Supports bilingual prompts (English & Chinese). ~13GB",
+    type=ModelType.Main,
+)
+
+z_image_turbo_quantized = StarterModel(
+    name="Z-Image Turbo (quantized)",
+    base=BaseModelType.ZImage,
+    source="https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q4_K.gguf",
+    description="Z-Image Turbo quantized to GGUF Q4_K format. Requires standalone Qwen3 text encoder and Flux VAE. ~4GB",
+    type=ModelType.Main,
+    format=ModelFormat.GGUFQuantized,
+    dependencies=[z_image_qwen3_encoder_quantized, flux_vae],
+)
+
+z_image_turbo_q8 = StarterModel(
+    name="Z-Image Turbo (Q8)",
+    base=BaseModelType.ZImage,
+    source="https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q8_0.gguf",
+    description="Z-Image Turbo quantized to GGUF Q8_0 format. Higher quality, larger size. Requires standalone Qwen3 text encoder and Flux VAE. ~6.6GB",
+    type=ModelType.Main,
+    format=ModelFormat.GGUFQuantized,
+    dependencies=[z_image_qwen3_encoder_quantized, flux_vae],
+)
+
+z_image_controlnet_union = StarterModel(
+    name="Z-Image ControlNet Union",
+    base=BaseModelType.ZImage,
+    source="https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/resolve/main/Z-Image-Turbo-Fun-Controlnet-Union-2.1-8steps.safetensors",
+    description="Unified ControlNet for Z-Image Turbo supporting Canny, HED, Depth, Pose, MLSD, and Inpainting modes.",
+    type=ModelType.ControlNet,
+)
+
+z_image_controlnet_tile = StarterModel(
+    name="Z-Image ControlNet Tile",
+    base=BaseModelType.ZImage,
+    source="https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/resolve/main/Z-Image-Turbo-Fun-Controlnet-Tile-2.1-8steps.safetensors",
+    description="Dedicated Tile ControlNet for Z-Image Turbo. Useful for upscaling and adding detail. ~6.7GB",
+    type=ModelType.ControlNet,
+)
+# endregion
+
 # List of starter models, displayed on the frontend.
 # The order/sort of this list is not changed by the frontend - set it how you want it here.
 STARTER_MODELS: list[StarterModel] = [
+    flux_kontext_quantized,
     flux_schnell_quantized,
     flux_dev_quantized,
     flux_schnell,
@@ -715,7 +925,7 @@ STARTER_MODELS: list[StarterModel] = [
     t2i_lineart_sdxl,
     t2i_sketch_sdxl,
     realesrgan_x4,
-    realesrgan_anime,
+    animesharp_v4_rcan,
     realesrgan_x2,
     swinir,
     t5_base_encoder,
@@ -725,7 +935,28 @@ STARTER_MODELS: list[StarterModel] = [
     flux_redux,
     llava_onevision,
     flux_fill,
+    flux2_vae,
+    flux2_klein_4b,
+    flux2_klein_4b_single,
+    flux2_klein_4b_fp8,
+    flux2_klein_9b,
+    flux2_klein_9b_fp8,
+    flux2_klein_4b_gguf_q4,
+    flux2_klein_4b_gguf_q8,
+    flux2_klein_9b_gguf_q4,
+    flux2_klein_9b_gguf_q8,
+    flux2_klein_qwen3_4b_encoder,
+    flux2_klein_qwen3_8b_encoder,
     cogview4,
+    flux_krea,
+    flux_krea_quantized,
+    z_image_turbo,
+    z_image_turbo_quantized,
+    z_image_turbo_q8,
+    z_image_qwen3_encoder,
+    z_image_qwen3_encoder_quantized,
+    z_image_controlnet_union,
+    z_image_controlnet_tile,
 ]
 
 sd1_bundle: list[StarterModel] = [
@@ -776,12 +1007,30 @@ flux_bundle: list[StarterModel] = [
     flux_depth_control_lora,
     flux_redux,
     flux_fill,
+    flux_kontext_quantized,
+    flux_krea_quantized,
 ]
 
-STARTER_BUNDLES: dict[str, list[StarterModel]] = {
-    BaseModelType.StableDiffusion1: sd1_bundle,
-    BaseModelType.StableDiffusionXL: sdxl_bundle,
-    BaseModelType.Flux: flux_bundle,
+zimage_bundle: list[StarterModel] = [
+    z_image_turbo_quantized,
+    z_image_qwen3_encoder_quantized,
+    z_image_controlnet_union,
+    z_image_controlnet_tile,
+    flux_vae,
+]
+
+flux2_klein_bundle: list[StarterModel] = [
+    flux2_klein_4b_gguf_q4,
+    flux2_vae,
+    flux2_klein_qwen3_4b_encoder,
+]
+
+STARTER_BUNDLES: dict[str, StarterModelBundle] = {
+    BaseModelType.StableDiffusion1: StarterModelBundle(name="Stable Diffusion 1.5", models=sd1_bundle),
+    BaseModelType.StableDiffusionXL: StarterModelBundle(name="SDXL", models=sdxl_bundle),
+    BaseModelType.Flux: StarterModelBundle(name="FLUX.1 dev", models=flux_bundle),
+    BaseModelType.Flux2: StarterModelBundle(name="FLUX.2 Klein", models=flux2_klein_bundle),
+    BaseModelType.ZImage: StarterModelBundle(name="Z-Image Turbo", models=zimage_bundle),
 }
 
 assert len(STARTER_MODELS) == len({m.source for m in STARTER_MODELS}), "Duplicate starter models"

@@ -1,12 +1,10 @@
 import { Button, ExternalLink, Spinner, Text } from '@invoke-ai/ui-library';
-import { skipToken } from '@reduxjs/toolkit/query';
 import { logger } from 'app/logging/logger';
-import type { AppDispatch, RootState } from 'app/store/store';
-import { useAppDispatch } from 'app/store/storeHooks';
+import type { AppDispatch, AppGetState } from 'app/store/store';
 import { getPrefixedId } from 'features/controlLayers/konva/util';
-import { useFeatureStatus } from 'features/system/hooks/useFeatureStatus';
+import { discordLink, githubIssuesLink } from 'features/system/store/constants';
 import { toast, toastApi } from 'features/toast/toast';
-import { setActiveTab } from 'features/ui/store/uiSlice';
+import { navigationApi } from 'features/ui/layouts/navigation-api';
 import { t } from 'i18next';
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -41,7 +39,10 @@ const getHFTokenStatus = async (dispatch: AppDispatch): Promise<S['HFTokenStatus
   }
 };
 
-export const buildOnModelInstallError = (getState: () => RootState, dispatch: AppDispatch) => {
+/**
+ * Handles model install error events by logging the error, displaying appropriate toast notifications.
+ */
+export const buildOnModelInstallError = (getState: AppGetState, dispatch: AppDispatch) => {
   return async (data: S['ModelInstallErrorEvent']) => {
     log.error({ data }, 'Model install error');
 
@@ -129,7 +130,6 @@ export const buildOnModelInstallError = (getState: () => RootState, dispatch: Ap
     if (!install) {
       dispatch(api.util.invalidateTags([{ type: 'ModelInstalls' }]));
     } else {
-      install.source;
       dispatch(
         modelsApi.util.updateQueryData('listModelInstalls', undefined, (draft) => {
           const modelImport = draft.find((m) => m.id === data.id);
@@ -146,16 +146,14 @@ export const buildOnModelInstallError = (getState: () => RootState, dispatch: Ap
 };
 
 const HFUnauthorizedToastDescription = () => {
-  const isEnabled = useFeatureStatus('hfToken');
-  const { data } = useGetHFTokenStatusQuery(isEnabled ? undefined : skipToken);
+  const { data } = useGetHFTokenStatusQuery();
 
   const { t } = useTranslation();
-  const dispatch = useAppDispatch();
 
   const onClick = useCallback(() => {
-    dispatch(setActiveTab('models'));
+    navigationApi.switchToTab('models');
     toastApi.close(UNAUTHORIZED_TOAST_ID);
-  }, [dispatch]);
+  }, []);
 
   if (!data) {
     return <Spinner />;
@@ -176,7 +174,7 @@ const HFUnauthorizedToastDescription = () => {
   if (data === 'unknown') {
     return (
       <Text fontSize="md">
-        {t('modelManager.hfTokenUnableToErrorMessage')}{' '}
+        {t('modelManager.hfTokenUnableToVerifyErrorMessage')}{' '}
         <Button onClick={onClick} variant="link" color="base.50" flexGrow={0}>
           {t('modelManager.modelManager')}.
         </Button>
@@ -184,6 +182,20 @@ const HFUnauthorizedToastDescription = () => {
     );
   }
 
-  // data === 'valid' - should never happen!
-  assert(false, 'Unexpected valid HF token with unauthorized error');
+  // data === 'valid' - user may have a token but not authorized for model?
+  return (
+    <Text fontSize="md">
+      {t('modelManager.hfTokenForbiddenErrorMessage')}{' '}
+      <Button onClick={onClick} variant="link" color="base.50" flexGrow={0}>
+        {t('modelManager.modelManager')}.
+      </Button>
+    </Text>
+  );
+};
+
+export const DiscordLink = () => {
+  return <ExternalLink fontWeight="semibold" href={discordLink} display="inline-flex" label="Discord" />;
+};
+export const GitHubIssuesLink = () => {
+  return <ExternalLink fontWeight="semibold" href={githubIssuesLink} display="inline-flex" label="GitHub" />;
 };

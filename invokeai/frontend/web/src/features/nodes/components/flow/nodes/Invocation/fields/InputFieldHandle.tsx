@@ -8,7 +8,6 @@ import {
   useIsConnectionStartField,
 } from 'features/nodes/hooks/useFieldConnectionState';
 import { useInputFieldTemplateOrThrow } from 'features/nodes/hooks/useInputFieldTemplateOrThrow';
-import { useIsWorkflowEditorLocked } from 'features/nodes/hooks/useIsWorkflowEditorLocked';
 import { useFieldTypeName } from 'features/nodes/hooks/usePrettyFieldType';
 import { HANDLE_TOOLTIP_OPEN_DELAY } from 'features/nodes/types/constants';
 import type { FieldInputTemplate } from 'features/nodes/types/field';
@@ -63,7 +62,7 @@ const handleStyles = {
 } satisfies CSSProperties;
 
 export const InputFieldHandle = memo(({ nodeId, fieldName }: Props) => {
-  const fieldTemplate = useInputFieldTemplateOrThrow(nodeId, fieldName);
+  const fieldTemplate = useInputFieldTemplateOrThrow(fieldName);
   const fieldTypeName = useFieldTypeName(fieldTemplate.type);
   const fieldColor = useMemo(() => getFieldColor(fieldTemplate.type), [fieldTemplate.type]);
   const isModelField = useMemo(() => isModelFieldType(fieldTemplate.type), [fieldTemplate.type]);
@@ -106,16 +105,9 @@ type HandleCommonProps = {
 };
 
 const IdleHandle = memo(({ fieldTemplate, fieldTypeName, fieldColor, isModelField }: HandleCommonProps) => {
-  const isLocked = useIsWorkflowEditorLocked();
   return (
     <Tooltip label={fieldTypeName} placement="start" openDelay={HANDLE_TOOLTIP_OPEN_DELAY}>
-      <Handle
-        type="target"
-        id={fieldTemplate.name}
-        position={Position.Left}
-        style={handleStyles}
-        isConnectable={!isLocked}
-      >
+      <Handle type="target" id={fieldTemplate.name} position={Position.Left} style={handleStyles}>
         <Box
           sx={sx}
           data-cardinality={fieldTemplate.type.cardinality}
@@ -138,7 +130,6 @@ const ConnectionInProgressHandle = memo(
     const { t } = useTranslation();
     const isConnectionStartField = useIsConnectionStartField(nodeId, fieldName, 'target');
     const connectionError = useConnectionErrorTKey(nodeId, fieldName, 'target');
-    const isLocked = useIsWorkflowEditorLocked();
 
     const tooltip = useMemo(() => {
       if (connectionError !== null) {
@@ -149,13 +140,7 @@ const ConnectionInProgressHandle = memo(
 
     return (
       <Tooltip label={tooltip} placement="start" openDelay={HANDLE_TOOLTIP_OPEN_DELAY}>
-        <Handle
-          type="target"
-          id={fieldTemplate.name}
-          position={Position.Left}
-          style={handleStyles}
-          isConnectable={!isLocked}
-        >
+        <Handle type="target" id={fieldTemplate.name} position={Position.Left} style={handleStyles}>
           <Box
             sx={sx}
             data-cardinality={fieldTemplate.type.cardinality}

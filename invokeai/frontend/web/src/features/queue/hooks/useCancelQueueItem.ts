@@ -5,26 +5,38 @@ import { useTranslation } from 'react-i18next';
 import { useCancelQueueItemMutation } from 'services/api/endpoints/queue';
 import { $isConnected } from 'services/events/stores';
 
-export const useCancelQueueItem = (item_id: number) => {
-  const isConnected = useStore($isConnected);
-  const [trigger, { isLoading }] = useCancelQueueItemMutation();
-  const { t } = useTranslation();
-  const cancelQueueItem = useCallback(async () => {
-    try {
-      await trigger(item_id).unwrap();
-      toast({
-        id: 'QUEUE_CANCEL_SUCCEEDED',
-        title: t('queue.cancelSucceeded'),
-        status: 'success',
-      });
-    } catch {
-      toast({
-        id: 'QUEUE_CANCEL_FAILED',
-        title: t('queue.cancelFailed'),
-        status: 'error',
-      });
-    }
-  }, [item_id, t, trigger]);
+const DEFAULTS = {
+  withToast: true,
+};
 
-  return { cancelQueueItem, isLoading, isDisabled: !isConnected };
+export const useCancelQueueItem = () => {
+  const isConnected = useStore($isConnected);
+  const [_trigger, { isLoading }] = useCancelQueueItemMutation();
+  const { t } = useTranslation();
+  const trigger = useCallback(
+    async (item_id: number, options?: { withToast?: boolean }) => {
+      const { withToast } = { ...DEFAULTS, ...options };
+      try {
+        await _trigger({ item_id }).unwrap();
+        if (withToast) {
+          toast({
+            id: 'QUEUE_CANCEL_SUCCEEDED',
+            title: t('queue.cancelSucceeded'),
+            status: 'success',
+          });
+        }
+      } catch {
+        if (withToast) {
+          toast({
+            id: 'QUEUE_CANCEL_FAILED',
+            title: t('queue.cancelFailed'),
+            status: 'error',
+          });
+        }
+      }
+    },
+    [t, _trigger]
+  );
+
+  return { trigger, isLoading, isDisabled: !isConnected };
 };

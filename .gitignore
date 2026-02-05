@@ -179,6 +179,7 @@ cython_debug/
 # Scratch folder
 .scratch/
 .vscode/
+.zed/
 
 # source installer files
 installer/*zip
@@ -188,3 +189,8 @@ installer/update.bat
 installer/update.sh
 installer/InvokeAI-Installer/
 .aider*
+
+.claude/
+
+# Weblate configuration file
+weblate.ini

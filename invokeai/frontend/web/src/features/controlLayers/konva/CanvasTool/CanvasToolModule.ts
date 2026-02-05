@@ -4,6 +4,7 @@ import { CanvasBboxToolModule } from 'features/controlLayers/konva/CanvasTool/Ca
 import { CanvasBrushToolModule } from 'features/controlLayers/konva/CanvasTool/CanvasBrushToolModule';
 import { CanvasColorPickerToolModule } from 'features/controlLayers/konva/CanvasTool/CanvasColorPickerToolModule';
 import { CanvasEraserToolModule } from 'features/controlLayers/konva/CanvasTool/CanvasEraserToolModule';
+import { CanvasGradientToolModule } from 'features/controlLayers/konva/CanvasTool/CanvasGradientToolModule';
 import { CanvasMoveToolModule } from 'features/controlLayers/konva/CanvasTool/CanvasMoveToolModule';
 import { CanvasRectToolModule } from 'features/controlLayers/konva/CanvasTool/CanvasRectToolModule';
 import { CanvasViewToolModule } from 'features/controlLayers/konva/CanvasTool/CanvasViewToolModule';
@@ -22,7 +23,6 @@ import type {
   Coordinate,
   Tool,
 } from 'features/controlLayers/store/types';
-import { isRenderableEntityType } from 'features/controlLayers/store/types';
 import Konva from 'konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import { atom } from 'nanostores';
@@ -61,6 +61,7 @@ export class CanvasToolModule extends CanvasModuleBase {
     brush: CanvasBrushToolModule;
     eraser: CanvasEraserToolModule;
     rect: CanvasRectToolModule;
+    gradient: CanvasGradientToolModule;
     colorPicker: CanvasColorPickerToolModule;
     bbox: CanvasBboxToolModule;
     view: CanvasViewToolModule;
@@ -70,7 +71,7 @@ export class CanvasToolModule extends CanvasModuleBase {
   /**
    * The currently selected tool.
    */
-  $tool = atom<Tool>('brush');
+  $tool = atom<Tool>('move');
   /**
    * A buffer for the currently selected tool. This is used to temporarily store the tool while the user is using any
    * hold-to-activate tools, like the view or color picker tools.
@@ -118,6 +119,7 @@ export class CanvasToolModule extends CanvasModuleBase {
       brush: new CanvasBrushToolModule(this),
       eraser: new CanvasEraserToolModule(this),
       rect: new CanvasRectToolModule(this),
+      gradient: new CanvasGradientToolModule(this),
       colorPicker: new CanvasColorPickerToolModule(this),
       bbox: new CanvasBboxToolModule(this),
       view: new CanvasViewToolModule(this),
@@ -165,7 +167,7 @@ export class CanvasToolModule extends CanvasModuleBase {
     const selectedEntityAdapter = this.manager.stateApi.getSelectedEntityAdapter();
 
     if (this.manager.stage.getIsDragging()) {
-      this.tools.view.syncCursorStyle();
+      stage.setCursor('grabbing');
     } else if (tool === 'view') {
       this.tools.view.syncCursorStyle();
     } else if (segmentingAdapter) {
@@ -180,7 +182,7 @@ export class CanvasToolModule extends CanvasModuleBase {
       this.tools.bbox.syncCursorStyle();
     } else if (tool === 'colorPicker') {
       this.tools.colorPicker.syncCursorStyle();
-    } else if (selectedEntityAdapter && isRenderableEntityType(selectedEntityAdapter.entityIdentifier.type)) {
+    } else if (selectedEntityAdapter) {
       if (selectedEntityAdapter.$isDisabled.get()) {
         stage.setCursor('not-allowed');
       } else if (selectedEntityAdapter.$isEntityTypeHidden.get()) {
@@ -195,6 +197,8 @@ export class CanvasToolModule extends CanvasModuleBase {
         this.tools.move.syncCursorStyle();
       } else if (tool === 'rect') {
         this.tools.rect.syncCursorStyle();
+      } else if (tool === 'gradient') {
+        this.tools.gradient.syncCursorStyle();
       }
     } else if (this.manager.stateApi.getRenderedEntityCount() === 0) {
       stage.setCursor('not-allowed');
@@ -337,7 +341,11 @@ export class CanvasToolModule extends CanvasModuleBase {
       const tool = this.$tool.get();
       const selectedEntity = this.manager.stateApi.getSelectedEntityAdapter();
 
-      if (selectedEntity?.bufferRenderer.state?.type !== 'rect' && selectedEntity?.bufferRenderer.hasBuffer()) {
+      if (
+        selectedEntity?.bufferRenderer.state?.type !== 'rect' &&
+        selectedEntity?.bufferRenderer.state?.type !== 'gradient' &&
+        selectedEntity?.bufferRenderer.hasBuffer()
+      ) {
         selectedEntity.bufferRenderer.commitBuffer();
         return;
       }
@@ -376,6 +384,8 @@ export class CanvasToolModule extends CanvasModuleBase {
         await this.tools.eraser.onStagePointerDown(e);
       } else if (tool === 'rect') {
         await this.tools.rect.onStagePointerDown(e);
+      } else if (tool === 'gradient') {
+        await this.tools.gradient.onStagePointerDown(e);
       }
     } finally {
       this.render();
@@ -406,6 +416,8 @@ export class CanvasToolModule extends CanvasModuleBase {
         this.tools.eraser.onStagePointerUp(e);
       } else if (tool === 'rect') {
         this.tools.rect.onStagePointerUp(e);
+      } else if (tool === 'gradient') {
+        this.tools.gradient.onStagePointerUp(e);
       }
     } finally {
       this.render();
@@ -437,6 +449,8 @@ export class CanvasToolModule extends CanvasModuleBase {
         await this.tools.eraser.onStagePointerMove(e);
       } else if (tool === 'rect') {
         await this.tools.rect.onStagePointerMove(e);
+      } else if (tool === 'gradient') {
+        await this.tools.gradient.onStagePointerMove(e);
       } else {
         this.manager.stateApi.getSelectedEntityAdapter()?.bufferRenderer.clearBuffer();
       }
@@ -463,6 +477,7 @@ export class CanvasToolModule extends CanvasModuleBase {
       if (
         selectedEntity &&
         selectedEntity.bufferRenderer.state?.type !== 'rect' &&
+        selectedEntity.bufferRenderer.state?.type !== 'gradient' &&
         selectedEntity.bufferRenderer.hasBuffer()
       ) {
         selectedEntity.bufferRenderer.commitBuffer();
@@ -630,6 +645,7 @@ export class CanvasToolModule extends CanvasModuleBase {
         eraser: this.tools.eraser.repr(),
         colorPicker: this.tools.colorPicker.repr(),
         rect: this.tools.rect.repr(),
+        gradient: this.tools.gradient.repr(),
         bbox: this.tools.bbox.repr(),
         view: this.tools.view.repr(),
         move: this.tools.move.repr(),
@@ -641,6 +657,9 @@ export class CanvasToolModule extends CanvasModuleBase {
     this.log.debug('Destroying module');
     this.subscriptions.forEach((unsubscribe) => unsubscribe());
     this.subscriptions.clear();
+    for (const tool of Object.values(this.tools)) {
+      tool.destroy();
+    }
     this.konva.group.destroy();
   };
 }

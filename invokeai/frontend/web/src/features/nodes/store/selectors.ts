@@ -7,7 +7,6 @@ import type { FieldInputInstance } from 'features/nodes/types/field';
 import type { AnyNode, InvocationNode, InvocationNodeData } from 'features/nodes/types/invocation';
 import { isInvocationNode } from 'features/nodes/types/invocation';
 import { isContainerElement, isNodeFieldElement } from 'features/nodes/types/workflow';
-import { uniqBy } from 'lodash-es';
 import { assert } from 'tsafe';
 
 export const selectNode = (nodesSlice: NodesState, nodeId: string): AnyNode => {
@@ -16,34 +15,15 @@ export const selectNode = (nodesSlice: NodesState, nodeId: string): AnyNode => {
   return node;
 };
 
-export const selectInvocationNode = (nodesSlice: NodesState, nodeId: string): InvocationNode => {
+const selectInvocationNode = (nodesSlice: NodesState, nodeId: string): InvocationNode => {
   const node = nodesSlice.nodes.find((node) => node.id === nodeId);
   assert(isInvocationNode(node), `Node ${nodeId} is not an invocation node`);
   return node;
 };
 
-export const selectInvocationNodeSafe = (nodesSlice: NodesState, nodeId: string): InvocationNode | undefined => {
-  const node = nodesSlice.nodes.find((node) => node.id === nodeId);
-  if (!isInvocationNode(node)) {
-    return undefined;
-  }
-  return node;
-};
-
-export const selectNodeData = (nodesSlice: NodesState, nodeId: string): InvocationNodeData => {
+const selectNodeData = (nodesSlice: NodesState, nodeId: string): InvocationNodeData => {
   const node = selectInvocationNode(nodesSlice, nodeId);
   return node.data;
-};
-
-export const selectFieldInputInstance = (
-  nodesSlice: NodesState,
-  nodeId: string,
-  fieldName: string
-): FieldInputInstance => {
-  const data = selectNodeData(nodesSlice, nodeId);
-  const field = data.inputs[fieldName];
-  assert(field !== undefined, `Field ${fieldName} not found in node ${nodeId}`);
-  return field;
 };
 
 export const selectFieldInputInstanceSafe = (
@@ -113,12 +93,12 @@ export const selectFormInitialValues = createNodesSelector((workflow) => workflo
 export const selectNodeFieldElements = createNodesSelector((workflow) =>
   Object.values(workflow.form.elements).filter(isNodeFieldElement)
 );
-export const selectWorkflowFormNodeFieldFieldIdentifiersDeduped = createSelector(
-  selectNodeFieldElements,
-  (nodeFieldElements) =>
-    uniqBy(nodeFieldElements, (el) => `${el.data.fieldIdentifier.nodeId}-${el.data.fieldIdentifier.fieldName}`).map(
-      (el) => el.data.fieldIdentifier
-    )
-);
 
 export const buildSelectElement = (id: string) => createNodesSelector((workflow) => workflow.form?.elements[id]);
+export const buildSelectWorkflowFormNodeElement = (nodeId: string, fieldName: string) =>
+  createSelector(selectNodeFieldElements, (elements) =>
+    elements.find(
+      (element) =>
+        element.data.fieldIdentifier.nodeId === nodeId && element.data.fieldIdentifier.fieldName === fieldName
+    )
+  );

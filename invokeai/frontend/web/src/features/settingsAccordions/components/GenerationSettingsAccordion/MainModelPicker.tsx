@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { MdMoneyOff } from 'react-icons/md';
 import { useMainModels } from 'services/api/hooks/modelsByType';
 import { useSelectedModelConfig } from 'services/api/hooks/useSelectedModelConfig';
-import { type AnyModelConfig, isCheckpointMainModelConfig } from 'services/api/types';
+import { type AnyModelConfig, isNonCommercialMainModelConfig } from 'services/api/types';
 
 export const MainModelPicker = memo(() => {
   const { t } = useTranslation();
@@ -23,11 +23,8 @@ export const MainModelPicker = memo(() => {
     [dispatch]
   );
 
-  const isFluxDevSelected = useMemo(
-    () =>
-      selectedModelConfig &&
-      isCheckpointMainModelConfig(selectedModelConfig) &&
-      selectedModelConfig.config_path === 'flux-dev',
+  const isNonCommercialSelected = useMemo(
+    () => selectedModelConfig && isNonCommercialMainModelConfig(selectedModelConfig),
     [selectedModelConfig]
   );
 
@@ -36,14 +33,20 @@ export const MainModelPicker = memo(() => {
       <InformationalPopover feature="paramModel">
         <FormLabel>{t('modelManager.model')}</FormLabel>
       </InformationalPopover>
-      {isFluxDevSelected && (
+      {isNonCommercialSelected && (
         <InformationalPopover feature="fluxDevLicense" hideDisable={true}>
           <Flex justifyContent="flex-start">
             <Icon as={MdMoneyOff} />
           </Flex>
         </InformationalPopover>
       )}
-      <ModelPicker modelConfigs={modelConfigs} selectedModelConfig={selectedModelConfig} onChange={onChange} grouped />
+      <ModelPicker
+        pickerId="main-model"
+        modelConfigs={modelConfigs}
+        selectedModelConfig={selectedModelConfig}
+        onChange={onChange}
+        grouped
+      />
       <UseDefaultSettingsButton />
     </Flex>
   );

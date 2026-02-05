@@ -2,12 +2,12 @@ import { createContext, useContext } from 'react';
 import type { ImageDTO } from 'services/api/types';
 import { assert } from 'tsafe';
 
-const ImageDTOContext = createContext<ImageDTO | null>(null);
+const ImageDTOCOntext = createContext<ImageDTO | null>(null);
 
-export const ImageDTOContextProvider = ImageDTOContext.Provider;
+export const ImageDTOContextProvider = ImageDTOCOntext.Provider;
 
 export const useImageDTOContext = () => {
-  const imageDTO = useContext(ImageDTOContext);
-  assert(imageDTO !== null, 'useImageDTOContext must be used within ImageDTOContextProvider');
-  return imageDTO;
+  const dto = useContext(ImageDTOCOntext);
+  assert(dto !== null, 'useItemDTOContext must be used within ItemDTOContextProvider');
+  return dto;
 };

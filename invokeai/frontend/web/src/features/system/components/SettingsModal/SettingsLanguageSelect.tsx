@@ -1,12 +1,11 @@
 import type { ComboboxOnChange } from '@invoke-ai/ui-library';
 import { Combobox, FormControl, FormLabel } from '@invoke-ai/ui-library';
 import { useAppDispatch, useAppSelector } from 'app/store/storeHooks';
-import { useFeatureStatus } from 'features/system/hooks/useFeatureStatus';
+import { map } from 'es-toolkit/compat';
 import { selectLanguage } from 'features/system/store/systemSelectors';
 import { languageChanged } from 'features/system/store/systemSlice';
 import type { Language } from 'features/system/store/types';
 import { isLanguage } from 'features/system/store/types';
-import { map } from 'lodash-es';
 import { memo, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -26,14 +25,14 @@ const optionsObject: Record<Language, string> = {
   nl: 'Nederlands',
   pl: 'Polski',
   pt: 'Português',
-  pt_BR: 'Português do Brasil',
+  'pt-BR': 'Português do Brasil',
   ru: 'Русский',
   sv: 'Svenska',
   tr: 'Türkçe',
   ua: 'Украї́нська',
   vi: 'Tiếng Việt',
-  zh_CN: '简体中文',
-  zh_Hant: '漢語',
+  'zh-CN': '简体中文',
+  'zh-Hant': '漢語',
 };
 
 const options = map(optionsObject, (label, value) => ({ label, value }));
@@ -42,7 +41,6 @@ export const SettingsLanguageSelect = memo(() => {
   const { t } = useTranslation();
   const dispatch = useAppDispatch();
   const language = useAppSelector(selectLanguage);
-  const isLocalizationEnabled = useFeatureStatus('localization');
 
   const value = useMemo(() => options.find((o) => o.value === language), [language]);
 
@@ -56,7 +54,7 @@ export const SettingsLanguageSelect = memo(() => {
     [dispatch]
   );
   return (
-    <FormControl isDisabled={!isLocalizationEnabled}>
+    <FormControl>
       <FormLabel>{t('common.languagePickerLabel')}</FormLabel>
       <Combobox value={value} options={options} onChange={onChange} />
     </FormControl>

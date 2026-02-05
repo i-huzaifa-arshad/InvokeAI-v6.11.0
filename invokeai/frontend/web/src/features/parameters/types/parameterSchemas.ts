@@ -1,6 +1,15 @@
 import { NUMPY_RAND_MAX } from 'app/constants';
 import { roundToMultiple } from 'common/util/roundDownToMultiple';
-import { zModelIdentifierField, zSchedulerField } from 'features/nodes/types/common';
+import { buildZodTypeGuard } from 'common/util/zodUtils';
+import {
+  zFluxDypeExponentField,
+  zFluxDypePresetField,
+  zFluxDypeScaleField,
+  zFluxSchedulerField,
+  zModelIdentifierField,
+  zSchedulerField,
+  zZImageSchedulerField,
+} from 'features/nodes/types/common';
 import { z } from 'zod';
 
 /**
@@ -16,20 +25,11 @@ import { z } from 'zod';
  */
 
 /**
- * Helper to create a type guard from a zod schema. The type guard will infer the schema's TS type.
- * @param schema The zod schema to create a type guard from.
- * @returns A type guard function for the schema.
- */
-export const buildTypeGuard = <T extends z.ZodTypeAny>(schema: T) => {
-  return (val: unknown): val is z.infer<T> => schema.safeParse(val).success;
-};
-
-/**
  * Helper to create a zod schema and a type guard from it.
  * @param schema The zod schema to create a type guard from.
  * @returns A tuple containing the zod schema and the type guard function.
  */
-const buildParameter = <T extends z.ZodTypeAny>(schema: T) => [schema, buildTypeGuard(schema)] as const;
+export const buildParameter = <T extends z.ZodTypeAny>(schema: T) => [schema, buildZodTypeGuard(schema)] as const;
 
 // #region Positive prompt
 export const [zParameterPositivePrompt, isParameterPositivePrompt] = buildParameter(z.string());
@@ -37,18 +37,8 @@ export type ParameterPositivePrompt = z.infer<typeof zParameterPositivePrompt>;
 // #endregion
 
 // #region Negative prompt
-export const [zParameterNegativePrompt, isParameterNegativePrompt] = buildParameter(z.string());
+export const [zParameterNegativePrompt, isParameterNegativePrompt] = buildParameter(z.string().nullable());
 export type ParameterNegativePrompt = z.infer<typeof zParameterNegativePrompt>;
-// #endregion
-
-// #region Positive style prompt (SDXL)
-export const [zParameterPositiveStylePromptSDXL, isParameterPositiveStylePromptSDXL] = buildParameter(z.string());
-export type ParameterPositiveStylePromptSDXL = z.infer<typeof zParameterPositiveStylePromptSDXL>;
-// #endregion
-
-// #region Positive style prompt (SDXL)
-export const [zParameterNegativeStylePromptSDXL, isParameterNegativeStylePromptSDXL] = buildParameter(z.string());
-export type ParameterNegativeStylePromptSDXL = z.infer<typeof zParameterNegativeStylePromptSDXL>;
 // #endregion
 
 // #region Steps
@@ -57,6 +47,7 @@ export type ParameterSteps = z.infer<typeof zParameterSteps>;
 // #endregion
 
 // #region CFG scale parameter
+// CFG scale must be > 0. 1.0 means no CFG effect (matching FLUX/Z-Image convention).
 export const [zParameterCFGScale, isParameterCFGScale] = buildParameter(z.number().min(1));
 export type ParameterCFGScale = z.infer<typeof zParameterCFGScale>;
 // #endregion
@@ -76,6 +67,31 @@ export type ParameterCFGRescaleMultiplier = z.infer<typeof zParameterCFGRescaleM
 // #region Scheduler
 export const [zParameterScheduler, isParameterScheduler] = buildParameter(zSchedulerField);
 export type ParameterScheduler = z.infer<typeof zParameterScheduler>;
+// #endregion
+
+// #region Flux Scheduler
+export const [zParameterFluxScheduler, isParameterFluxScheduler] = buildParameter(zFluxSchedulerField);
+export type ParameterFluxScheduler = z.infer<typeof zParameterFluxScheduler>;
+// #endregion
+
+// #region Z-Image Scheduler
+export const [zParameterZImageScheduler, isParameterZImageScheduler] = buildParameter(zZImageSchedulerField);
+export type ParameterZImageScheduler = z.infer<typeof zParameterZImageScheduler>;
+// #endregion
+
+// #region Flux DyPE Preset
+export const [zParameterFluxDypePreset, isParameterFluxDypePreset] = buildParameter(zFluxDypePresetField);
+export type ParameterFluxDypePreset = z.infer<typeof zParameterFluxDypePreset>;
+// #endregion
+
+// #region Flux DyPE Scale (magnitude λs)
+export const [zParameterFluxDypeScale, isParameterFluxDypeScale] = buildParameter(zFluxDypeScaleField);
+export type ParameterFluxDypeScale = z.infer<typeof zParameterFluxDypeScale>;
+// #endregion
+
+// #region Flux DyPE Exponent (decay speed λt)
+export const [zParameterFluxDypeExponent, isParameterFluxDypeExponent] = buildParameter(zFluxDypeExponentField);
+export type ParameterFluxDypeExponent = z.infer<typeof zParameterFluxDypeExponent>;
 // #endregion
 
 // #region seed
@@ -104,7 +120,7 @@ export type ParameterModel = z.infer<typeof zParameterModel>;
 // #endregion
 
 // #region SDXL Refiner Model
-const zParameterSDXLRefinerModel = zModelIdentifierField;
+export const zParameterSDXLRefinerModel = zModelIdentifierField;
 export type ParameterSDXLRefinerModel = z.infer<typeof zParameterSDXLRefinerModel>;
 // #endregion
 
@@ -139,8 +155,8 @@ export type ParameterCLIPGEmbedModel = z.infer<typeof zParameterCLIPGEmbedModel>
 // #endregion
 
 // #region LoRA Model
-const zParameterLoRAModel = zModelIdentifierField;
-export type ParameterLoRAModel = z.infer<typeof zParameterLoRAModel>;
+const _zParameterLoRAModel = zModelIdentifierField;
+export type ParameterLoRAModel = z.infer<typeof _zParameterLoRAModel>;
 // #endregion
 
 // #region VAE Model
@@ -151,6 +167,15 @@ export type ParameterSpandrelImageToImageModel = z.infer<typeof zParameterSpandr
 // #region Strength (l2l strength)
 export const [zParameterStrength, isParameterStrength] = buildParameter(z.number().min(0).max(1));
 export type ParameterStrength = z.infer<typeof zParameterStrength>;
+export const PARAMETER_STRENGTH_CONSTRAINTS = {
+  initial: 0.7,
+  sliderMin: 0,
+  sliderMax: 1,
+  numberInputMin: 0,
+  numberInputMax: 1,
+  fineStep: 0.01,
+  coarseStep: 0.05,
+};
 // #endregion
 
 // #region SeamlessX
@@ -196,7 +221,7 @@ export type ParameterSDXLRefinerStart = z.infer<typeof zParameterSDXLRefinerStar
 // #endregion
 
 // #region Mask Blur Method
-const zParameterMaskBlurMethod = z.enum(['box', 'gaussian']);
+export const [zParameterMaskBlurMethod, isParameterMaskBlurMethod] = buildParameter(z.enum(['box', 'gaussian']));
 export type ParameterMaskBlurMethod = z.infer<typeof zParameterMaskBlurMethod>;
 // #endregion
 
@@ -210,4 +235,9 @@ export type ParameterCanvasCoherenceMode = z.infer<typeof zParameterCanvasCohere
 // #region LoRA weight
 export const [zLoRAWeight, isParameterLoRAWeight] = buildParameter(z.number());
 export type ParameterLoRAWeight = z.infer<typeof zLoRAWeight>;
+// #endregion
+
+// #region CLIP skip
+export const [zParameterCLIPSkip, isParameterCLIPSkip] = buildParameter(z.number().int().min(0));
+export type ParameterCLIPSkip = z.infer<typeof zParameterCLIPSkip>;
 // #endregion

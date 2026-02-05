@@ -8,8 +8,12 @@ import picklescan.scanner as pscan
 import safetensors
 import torch
 
+from invokeai.app.services.config.config_default import get_config
 from invokeai.backend.model_manager.taxonomy import ClipVariantType
 from invokeai.backend.quantization.gguf.loaders import gguf_sd_loader
+from invokeai.backend.util.logging import InvokeAILogger
+
+logger = InvokeAILogger.get_logger()
 
 
 def _fast_safetensors_reader(path: str) -> Dict[str, torch.Tensor]:
@@ -59,22 +63,34 @@ def read_checkpoint_meta(path: Union[str, Path], scan: bool = True) -> Dict[str,
         if scan:
             scan_result = pscan.scan_file_path(path)
             if scan_result.infected_files != 0:
-                raise Exception(f"The model at {path} is potentially infected by malware. Aborting import.")
+                if get_config().unsafe_disable_picklescan:
+                    logger.warning(
+                        f"The model {path} is potentially infected by malware, but picklescan is disabled. "
+                        "Proceeding with caution."
+                    )
+                else:
+                    raise RuntimeError(f"The model {path} is potentially infected by malware. Aborting import.")
             if scan_result.scan_err:
-                raise Exception(f"Error scanning model at {path} for malware. Aborting import.")
+                if get_config().unsafe_disable_picklescan:
+                    logger.warning(
+                        f"Error scanning the model at {path} for malware, but picklescan is disabled. "
+                        "Proceeding with caution."
+                    )
+                else:
+                    raise RuntimeError(f"Error scanning the model at {path} for malware. Aborting import.")
 
         checkpoint = torch.load(path, map_location=torch.device("meta"))
     return checkpoint
 
 
-def lora_token_vector_length(checkpoint: Dict[str, torch.Tensor]) -> Optional[int]:
+def lora_token_vector_length(checkpoint: dict[str | int, torch.Tensor]) -> Optional[int]:
     """
     Given a checkpoint in memory, return the lora token vector length
 
     :param checkpoint: The checkpoint
     """
 
-    def _get_shape_1(key: str, tensor: torch.Tensor, checkpoint: Dict[str, torch.Tensor]) -> Optional[int]:
+    def _get_shape_1(key: str, tensor: torch.Tensor, checkpoint: dict[str | int, torch.Tensor]) -> Optional[int]:
         lora_token_vector_length = None
 
         if "." not in key:
@@ -120,6 +136,8 @@ def lora_token_vector_length(checkpoint: Dict[str, torch.Tensor]) -> Optional[in
     lora_te1_length = None
     lora_te2_length = None
     for key, tensor in checkpoint.items():
+        if isinstance(key, int):
+            continue
         if key.startswith("lora_unet_") and ("_attn2_to_k." in key or "_attn2_to_v." in key):
             lora_token_vector_length = _get_shape_1(key, tensor, checkpoint)
         elif key.startswith("lora_unet_") and (

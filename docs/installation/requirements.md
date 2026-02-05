@@ -25,11 +25,28 @@ The requirements below are rough guidelines for best performance. GPUs with less
         - Memory: At least 16GB RAM.
         - Disk: 10GB for base installation plus 100GB for models.
 
-    === "FLUX - 1024×1024"
+    === "FLUX.1 - 1024×1024"
 
         - GPU: Nvidia 20xx series or later, 10GB+ VRAM.
         - Memory: At least 32GB RAM.
         - Disk: 10GB for base installation plus 200GB for models.
+
+    === "FLUX.2 Klein 4B - 1024×1024"
+
+        - GPU: Nvidia 30xx series or later, 12GB+ VRAM (e.g. RTX 3090, RTX 4070). FP8 version works with 8GB+ VRAM.
+        - Memory: At least 16GB RAM.
+        - Disk: 10GB for base installation plus 20GB for models (Diffusers format with encoder).
+
+    === "FLUX.2 Klein 9B - 1024×1024"
+
+        - GPU: Nvidia 40xx series, 24GB+ VRAM (e.g. RTX 4090). FP8 version works with 12GB+ VRAM.
+        - Memory: At least 32GB RAM.
+        - Disk: 10GB for base installation plus 40GB for models (Diffusers format with encoder).
+
+    === "Z-Image Turbo - 1024x1024"
+        - GPU: Nvidia 20xx series or later, 8GB+ VRAM for the Q4_K quantized model. 16GB+ needed for the Q8 or BF16 models.
+        - Memory: At least 16GB RAM.
+        - Disk: 10GB for base installation plus 35GB for models.
 
 !!! info "`tmpfs` on Linux"
 
@@ -41,7 +58,7 @@ The requirements below are rough guidelines for best performance. GPUs with less
 
     You don't need to do this if you are installing with the [Invoke Launcher](./quick_start.md).
 
-Invoke requires python 3.10 through 3.12. If you don't already have one of these versions installed, we suggest installing 3.12, as it will be supported for longer.
+Invoke requires python 3.11 through 3.12. If you don't already have one of these versions installed, we suggest installing 3.12, as it will be supported for longer.
 
 Check that your system has an up-to-date Python installed by running `python3 --version` in the terminal (Linux, macOS) or cmd/powershell (Windows).
 
@@ -56,7 +73,7 @@ Check that your system has an up-to-date Python installed by running `python3 --
     === "macOS"
 
         - Install python with [an official installer].
-        - If model installs fail with a certificate error, you may need to run this command (changing the python version to match what you have installed): `/Applications/Python\ 3.10/Install\ Certificates.command`
+        - If model installs fail with a certificate error, you may need to run this command (changing the python version to match what you have installed): `/Applications/Python\ 3.11/Install\ Certificates.command`
         - If you haven't already, you will need to install the XCode CLI Tools by running `xcode-select --install` in a terminal.
 
     === "Linux"

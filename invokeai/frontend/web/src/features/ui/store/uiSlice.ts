@@ -1,109 +1,124 @@
 import type { PayloadAction } from '@reduxjs/toolkit';
-import { createSelector, createSlice } from '@reduxjs/toolkit';
-import type { PersistConfig, RootState } from 'app/store/store';
-import { newSessionRequested } from 'features/controlLayers/store/actions';
-import type { Dimensions } from 'features/controlLayers/store/types';
-import { workflowLoaded } from 'features/nodes/store/nodesSlice';
-import { atom } from 'nanostores';
+import { createSlice } from '@reduxjs/toolkit';
+import type { RootState } from 'app/store/store';
+import type { SliceConfig } from 'app/store/types';
+import { isPlainObject } from 'es-toolkit';
+import { assert } from 'tsafe';
 
-import type { CanvasRightPanelTabName, TabName, UIState } from './uiTypes';
+import { getInitialUIState, type UIState, zUIState } from './uiTypes';
 
-const initialUIState: UIState = {
-  _version: 3,
-  activeTab: 'canvas',
-  activeTabCanvasRightPanel: 'gallery',
-  shouldShowImageDetails: false,
-  shouldShowProgressInViewer: true,
-  accordions: {},
-  expanders: {},
-  textAreaSizes: {},
-  shouldShowNotificationV2: true,
-};
-
-export const uiSlice = createSlice({
+const slice = createSlice({
   name: 'ui',
-  initialState: initialUIState,
+  initialState: getInitialUIState(),
   reducers: {
-    setActiveTab: (state, action: PayloadAction<TabName>) => {
+    setActiveTab: (state, action: PayloadAction<UIState['activeTab']>) => {
       state.activeTab = action.payload;
     },
-    activeTabCanvasRightPanelChanged: (state, action: PayloadAction<CanvasRightPanelTabName>) => {
-      state.activeTabCanvasRightPanel = action.payload;
+    setShouldShowItemDetails: (state, action: PayloadAction<UIState['shouldShowItemDetails']>) => {
+      state.shouldShowItemDetails = action.payload;
     },
-    setShouldShowImageDetails: (state, action: PayloadAction<boolean>) => {
-      state.shouldShowImageDetails = action.payload;
-    },
-    setShouldShowProgressInViewer: (state, action: PayloadAction<boolean>) => {
+    setShouldShowProgressInViewer: (state, action: PayloadAction<UIState['shouldShowProgressInViewer']>) => {
       state.shouldShowProgressInViewer = action.payload;
     },
-    accordionStateChanged: (state, action: PayloadAction<{ id: string; isOpen: boolean }>) => {
+    setShouldUsePagedGalleryView: (state, action: PayloadAction<UIState['shouldUsePagedGalleryView']>) => {
+      state.shouldUsePagedGalleryView = action.payload;
+    },
+    accordionStateChanged: (
+      state,
+      action: PayloadAction<{
+        id: keyof UIState['accordions'];
+        isOpen: UIState['accordions'][keyof UIState['accordions']];
+      }>
+    ) => {
       const { id, isOpen } = action.payload;
       state.accordions[id] = isOpen;
     },
-    expanderStateChanged: (state, action: PayloadAction<{ id: string; isOpen: boolean }>) => {
+    expanderStateChanged: (
+      state,
+      action: PayloadAction<{
+        id: keyof UIState['expanders'];
+        isOpen: UIState['expanders'][keyof UIState['expanders']];
+      }>
+    ) => {
       const { id, isOpen } = action.payload;
       state.expanders[id] = isOpen;
     },
-    textAreaSizesStateChanged: (state, action: PayloadAction<{ id: string; size: Partial<Dimensions> }>) => {
+    textAreaSizesStateChanged: (
+      state,
+      action: PayloadAction<{
+        id: keyof UIState['textAreaSizes'];
+        size: UIState['textAreaSizes'][keyof UIState['textAreaSizes']];
+      }>
+    ) => {
       const { id, size } = action.payload;
       state.textAreaSizes[id] = size;
     },
-    shouldShowNotificationChanged: (state, action: PayloadAction<boolean>) => {
+    dockviewStorageKeyChanged: (
+      state,
+      action: PayloadAction<{
+        id: keyof UIState['panels'];
+        state: UIState['panels'][keyof UIState['panels']] | undefined;
+      }>
+    ) => {
+      const { id, state: panelState } = action.payload;
+      if (panelState) {
+        state.panels[id] = panelState;
+      } else {
+        delete state.panels[id];
+      }
+    },
+    shouldShowNotificationChanged: (state, action: PayloadAction<UIState['shouldShowNotificationV2']>) => {
       state.shouldShowNotificationV2 = action.payload;
     },
-  },
-  extraReducers(builder) {
-    builder.addCase(workflowLoaded, (state) => {
-      state.activeTab = 'workflows';
-    });
-    builder.addMatcher(newSessionRequested, (state) => {
-      state.activeTab = 'canvas';
-    });
+    pickerCompactViewStateChanged: (state, action: PayloadAction<{ pickerId: string; isCompact: boolean }>) => {
+      state.pickerCompactViewStates[action.payload.pickerId] = action.payload.isCompact;
+    },
   },
 });
 
 export const {
   setActiveTab,
-  activeTabCanvasRightPanelChanged,
-  setShouldShowImageDetails,
+  setShouldShowItemDetails,
   setShouldShowProgressInViewer,
+  setShouldUsePagedGalleryView,
   accordionStateChanged,
   expanderStateChanged,
   shouldShowNotificationChanged,
   textAreaSizesStateChanged,
-} = uiSlice.actions;
+  dockviewStorageKeyChanged,
+  pickerCompactViewStateChanged,
+} = slice.actions;
 
 export const selectUiSlice = (state: RootState) => state.ui;
 
-/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-const migrateUIState = (state: any): any => {
-  if (!('_version' in state)) {
-    state._version = 1;
-  }
-  if (state._version === 1) {
-    state.activeTab = 'generation';
-    state._version = 2;
-  }
-  if (state._version === 2) {
-    state.activeTab = 'canvas';
-    state._version = 3;
-  }
-  return state;
+export const uiSliceConfig: SliceConfig<typeof slice> = {
+  slice,
+  schema: zUIState,
+  getInitialState: getInitialUIState,
+  persistConfig: {
+    migrate: (state) => {
+      assert(isPlainObject(state));
+      if (!('_version' in state)) {
+        state._version = 1;
+      }
+      if (state._version === 1) {
+        state.activeTab = 'generation';
+        state._version = 2;
+      }
+      if (state._version === 2) {
+        state.activeTab = 'canvas';
+        state._version = 3;
+      }
+      if (state._version === 3) {
+        state.panels = {};
+        state._version = 4;
+      }
+      if (state._version === 4) {
+        state.shouldUsePagedGalleryView = false;
+        state._version = 5;
+      }
+      return zUIState.parse(state);
+    },
+    persistDenylist: ['shouldShowItemDetails'],
+  },
 };
-
-export const uiPersistConfig: PersistConfig<UIState> = {
-  name: uiSlice.name,
-  initialState: initialUIState,
-  migrate: migrateUIState,
-  persistDenylist: ['shouldShowImageDetails'],
-};
-
-const TABS_WITH_LEFT_PANEL: TabName[] = ['canvas', 'upscaling', 'workflows'] as const;
-export const LEFT_PANEL_MIN_SIZE_PX = 400;
-export const $isLeftPanelOpen = atom(true);
-export const selectWithLeftPanel = createSelector(selectUiSlice, (ui) => TABS_WITH_LEFT_PANEL.includes(ui.activeTab));
-
-const TABS_WITH_RIGHT_PANEL: TabName[] = ['canvas', 'upscaling', 'workflows'] as const;
-export const RIGHT_PANEL_MIN_SIZE_PX = 390;
-export const $isRightPanelOpen = atom(true);
-export const selectWithRightPanel = createSelector(selectUiSlice, (ui) => TABS_WITH_RIGHT_PANEL.includes(ui.activeTab));

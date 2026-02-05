@@ -1,7 +1,6 @@
 import type { EntityState } from '@reduxjs/toolkit';
-import { createEntityAdapter, createSelector } from '@reduxjs/toolkit';
+import { createEntityAdapter } from '@reduxjs/toolkit';
 import { getSelectorsOptions } from 'app/store/createMemoizedSelector';
-import { selectParamsSlice } from 'features/controlLayers/store/paramsSlice';
 import queryString from 'query-string';
 import type { operations, paths } from 'services/api/schema';
 import type {
@@ -11,7 +10,6 @@ import type {
   SetHFTokenArg,
   SetHFTokenResponse,
 } from 'services/api/types';
-import { isNonRefinerMainModelConfig } from 'services/api/types';
 import type { Param0 } from 'tsafe';
 
 import type { ApiTagDescription } from '..';
@@ -44,6 +42,14 @@ type DeleteModelArg = {
 };
 type DeleteModelResponse = void;
 type DeleteModelImageResponse = void;
+
+type BulkDeleteModelsArg = {
+  keys: string[];
+};
+type BulkDeleteModelsResponse = {
+  deleted: string[];
+  failed: string[];
+};
 
 type ConvertMainModelResponse =
   paths['/api/v2/models/convert/{key}']['put']['responses']['200']['content']['application/json'];
@@ -149,6 +155,16 @@ export const modelsApi = api.injectEndpoints({
         return {
           url: buildModelsUrl(`i/${key}`),
           method: 'DELETE',
+        };
+      },
+      invalidatesTags: [{ type: 'ModelConfig', id: LIST_TAG }],
+    }),
+    bulkDeleteModels: build.mutation<BulkDeleteModelsResponse, BulkDeleteModelsArg>({
+      query: ({ keys }) => {
+        return {
+          url: buildModelsUrl(`i/bulk_delete`),
+          method: 'POST',
+          body: { keys },
         };
       },
       invalidatesTags: [{ type: 'ModelConfig', id: LIST_TAG }],
@@ -274,6 +290,13 @@ export const modelsApi = api.injectEndpoints({
         });
       },
     }),
+    getMissingModels: build.query<EntityState<AnyModelConfig, string>, void>({
+      query: () => ({ url: buildModelsUrl('missing') }),
+      providesTags: [{ type: 'ModelConfig', id: LIST_TAG }],
+      transformResponse: (response: GetModelConfigsResponse) => {
+        return modelConfigsAdapter.setAll(modelConfigsAdapter.getInitialState(), response.models);
+      },
+    }),
     getStarterModels: build.query<GetStarterModelsResponse, void>({
       query: () => buildModelsUrl('starter_models'),
       providesTags: [{ type: 'ModelConfig', id: LIST_TAG }],
@@ -301,13 +324,49 @@ export const modelsApi = api.injectEndpoints({
     emptyModelCache: build.mutation<void, void>({
       query: () => ({ url: buildModelsUrl('empty_model_cache'), method: 'POST' }),
     }),
+    reidentifyModel: build.mutation<
+      paths['/api/v2/models/i/{key}/reidentify']['post']['responses']['200']['content']['application/json'],
+      { key: string }
+    >({
+      query: ({ key }) => {
+        return {
+          url: buildModelsUrl(`i/${key}/reidentify`),
+          method: 'POST',
+        };
+      },
+      onQueryStarted: async (_, { dispatch, queryFulfilled }) => {
+        try {
+          const { data } = await queryFulfilled;
+
+          // Update the individual model query caches
+          dispatch(modelsApi.util.upsertQueryData('getModelConfig', data.key, data));
+
+          const { base, name, type } = data;
+          dispatch(modelsApi.util.upsertQueryData('getModelConfigByAttrs', { base, name, type }, data));
+
+          // Update the list query cache
+          dispatch(
+            modelsApi.util.updateQueryData('getModelConfigs', undefined, (draft) => {
+              modelConfigsAdapter.updateOne(draft, {
+                id: data.key,
+                changes: data,
+              });
+            })
+          );
+        } catch {
+          // no-op
+        }
+      },
+    }),
   }),
 });
 
 export const {
   useGetModelConfigsQuery,
   useGetModelConfigQuery,
+  useGetMissingModelsQuery,
   useDeleteModelsMutation,
+  useBulkDeleteModelsMutation,
   useDeleteModelImageMutation,
   useUpdateModelMutation,
   useUpdateModelImageMutation,
@@ -323,26 +382,8 @@ export const {
   useSetHFTokenMutation,
   useResetHFTokenMutation,
   useEmptyModelCacheMutation,
+  useReidentifyModelMutation,
 } = modelsApi;
 
 export const selectModelConfigsQuery = modelsApi.endpoints.getModelConfigs.select();
-export const selectMainModelConfig = createSelector(
-  selectModelConfigsQuery,
-  selectParamsSlice,
-  (modelConfigs, { model }) => {
-    if (!modelConfigs.data) {
-      return null;
-    }
-    if (!model) {
-      return null;
-    }
-    const modelConfig = modelConfigsAdapterSelectors.selectById(modelConfigs.data, model.key);
-    if (!modelConfig) {
-      return null;
-    }
-    if (!isNonRefinerMainModelConfig(modelConfig)) {
-      return null;
-    }
-    return modelConfig;
-  }
-);
+export const selectMissingModelsQuery = modelsApi.endpoints.getMissingModels.select();

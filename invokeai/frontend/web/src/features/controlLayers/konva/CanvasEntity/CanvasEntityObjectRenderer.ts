@@ -1,6 +1,6 @@
-import { $authToken } from 'app/store/nanostores/authToken';
 import { rgbColorToString } from 'common/util/colorCodeTransformers';
 import { SyncableMap } from 'common/util/SyncableMap/SyncableMap';
+import { throttle } from 'es-toolkit/compat';
 import type { CanvasEntityAdapter } from 'features/controlLayers/konva/CanvasEntity/types';
 import type { CanvasManager } from 'features/controlLayers/konva/CanvasManager';
 import { CanvasModuleBase } from 'features/controlLayers/konva/CanvasModuleBase';
@@ -8,12 +8,14 @@ import { CanvasObjectBrushLine } from 'features/controlLayers/konva/CanvasObject
 import { CanvasObjectBrushLineWithPressure } from 'features/controlLayers/konva/CanvasObject/CanvasObjectBrushLineWithPressure';
 import { CanvasObjectEraserLine } from 'features/controlLayers/konva/CanvasObject/CanvasObjectEraserLine';
 import { CanvasObjectEraserLineWithPressure } from 'features/controlLayers/konva/CanvasObject/CanvasObjectEraserLineWithPressure';
+import { CanvasObjectGradient } from 'features/controlLayers/konva/CanvasObject/CanvasObjectGradient';
 import { CanvasObjectImage } from 'features/controlLayers/konva/CanvasObject/CanvasObjectImage';
 import { CanvasObjectRect } from 'features/controlLayers/konva/CanvasObject/CanvasObjectRect';
 import type { AnyObjectRenderer, AnyObjectState } from 'features/controlLayers/konva/CanvasObject/types';
 import { LightnessToAlphaFilter } from 'features/controlLayers/konva/filters';
 import { getPatternSVG } from 'features/controlLayers/konva/patterns/getPatternSVG';
 import {
+  areStageAttrsGonnaExplode,
   getKonvaNodeDebugAttrs,
   getPrefixedId,
   konvaNodeToBlob,
@@ -25,7 +27,6 @@ import type { Rect } from 'features/controlLayers/store/types';
 import { imageDTOToImageObject } from 'features/controlLayers/store/util';
 import Konva from 'konva';
 import type { GroupConfig } from 'konva/lib/Group';
-import { throttle } from 'lodash-es';
 import type { Logger } from 'roarr';
 import { serializeError } from 'serialize-error';
 import { getImageDTOSafe, uploadImage } from 'services/api/endpoints/images';
@@ -37,7 +38,7 @@ function setFillPatternImage(shape: Konva.Shape, ...args: Parameters<typeof getP
   imageElement.onload = () => {
     shape.fillPatternImage(imageElement);
   };
-  imageElement.crossOrigin = $authToken.get() ? 'use-credentials' : 'anonymous';
+  imageElement.crossOrigin = 'anonymous';
   imageElement.src = getPatternSVG(...args);
   return imageElement;
 }
@@ -64,6 +65,11 @@ export class CanvasEntityObjectRenderer extends CanvasModuleBase {
    * This map can be used with React.useSyncExternalStore to sync the object renderers with a React component.
    */
   renderers = new SyncableMap<string, AnyObjectRenderer>();
+
+  /**
+   * Tracks the cache keys used when rasterizing this entity so they can be invalidated on demand.
+   */
+  rasterCacheKeys = new Set<string>();
 
   /**
    * A object containing singleton Konva nodes.
@@ -138,6 +144,10 @@ export class CanvasEntityObjectRenderer extends CanvasModuleBase {
           return;
         }
 
+        if (areStageAttrsGonnaExplode(stageAttrs)) {
+          return;
+        }
+
         if (
           stageAttrs.width !== oldStageAttrs.width ||
           stageAttrs.height !== oldStageAttrs.height ||
@@ -208,6 +218,9 @@ export class CanvasEntityObjectRenderer extends CanvasModuleBase {
     // We should never cache the entity if it is not visible - it will cache as a transparent image.
     const isVisible = this.parent.konva.layer.visible();
     const isCached = this.konva.objectGroup.isCached();
+
+    // We should also never cache if the entity has no dimensions. Konva will log an error to console like this:
+    // Konva error: Can not cache the node. Width or height of the node equals 0. Caching is skipped.
 
     if (isVisible && (force || !isCached)) {
       this.log.trace('Caching object group');
@@ -389,6 +402,16 @@ export class CanvasEntityObjectRenderer extends CanvasModuleBase {
       }
 
       didRender = renderer.update(objectState, force || isFirstRender);
+    } else if (objectState.type === 'gradient') {
+      assert(renderer instanceof CanvasObjectGradient || !renderer);
+
+      if (!renderer) {
+        renderer = new CanvasObjectGradient(objectState, this);
+        this.renderers.set(renderer.id, renderer);
+        this.konva.objectGroup.add(renderer.konva.group);
+      }
+
+      didRender = renderer.update(objectState, force || isFirstRender);
     } else if (objectState.type === 'image') {
       assert(renderer instanceof CanvasObjectImage || !renderer);
 
@@ -422,8 +445,9 @@ export class CanvasEntityObjectRenderer extends CanvasModuleBase {
     for (const renderer of this.renderers.values()) {
       const isEraserLine = renderer instanceof CanvasObjectEraserLine;
       const isImage = renderer instanceof CanvasObjectImage;
+      const imageIgnoresTransparency = isImage && renderer.state.usePixelBbox === false;
       const hasClip = renderer instanceof CanvasObjectBrushLine && renderer.state.clip;
-      if (isEraserLine || hasClip || isImage) {
+      if (isEraserLine || hasClip || (isImage && !imageIgnoresTransparency)) {
         needsPixelBbox = true;
         break;
       }
@@ -469,7 +493,7 @@ export class CanvasEntityObjectRenderer extends CanvasModuleBase {
   }): Promise<ImageDTO> => {
     const rasterizingAdapter = this.manager.stateApi.$rasterizingAdapter.get();
     if (rasterizingAdapter) {
-      assert(false, `Already rasterizing an entity: ${rasterizingAdapter.id}`);
+      await this.manager.stateApi.waitForRasterizationToFinish();
     }
 
     const { rect, replaceObjects, attrs, bg, ignoreCache } = {
@@ -486,6 +510,7 @@ export class CanvasEntityObjectRenderer extends CanvasModuleBase {
     if (cachedImageName && !ignoreCache) {
       imageDTO = await getImageDTOSafe(cachedImageName);
       if (imageDTO) {
+        this.rasterCacheKeys.add(hash);
         this.log.trace({ rect, cachedImageName, imageDTO }, 'Using cached rasterized image');
         return imageDTO;
       }
@@ -517,6 +542,7 @@ export class CanvasEntityObjectRenderer extends CanvasModuleBase {
         replaceObjects,
       });
       this.manager.cache.imageNameCache.set(hash, imageDTO.image_name);
+      this.rasterCacheKeys.add(hash);
       return imageDTO;
     } catch (error) {
       this.log.error({ rasterizeArgs, error: serializeError(error as Error) }, 'Failed to rasterize entity');
@@ -526,37 +552,83 @@ export class CanvasEntityObjectRenderer extends CanvasModuleBase {
     }
   };
 
-  cloneObjectGroup = (arg: { attrs?: GroupConfig } = {}): Konva.Group => {
-    const { attrs } = arg;
+  /**
+   * Invalidates all cached rasterizations for this entity by removing the cached image
+   * names from the image cache and clearing the tracked raster cache keys. This forces
+   * future rasterizations to regenerate images instead of using potentially stale
+   * cached versions.
+   */
+  invalidateRasterCache = () => {
+    if (this.rasterCacheKeys.size === 0) {
+      return;
+    }
+    for (const key of this.rasterCacheKeys) {
+      this.manager.cache.imageNameCache.delete(key);
+    }
+    this.rasterCacheKeys.clear();
+  };
+
+  cloneObjectGroup = (
+    arg: { attrs?: GroupConfig; cache?: { pixelRatio?: number; imageSmoothingEnabled?: boolean } } = {}
+  ): Konva.Group => {
+    const { attrs, cache } = arg;
     const clone = this.konva.objectGroup.clone();
     if (attrs) {
       clone.setAttrs(attrs);
     }
     if (clone.hasChildren()) {
-      clone.cache({ pixelRatio: 1, imageSmoothingEnabled: false });
+      const { pixelRatio = 1, imageSmoothingEnabled = false } = cache ?? {};
+      clone.cache({ pixelRatio, imageSmoothingEnabled });
     }
     return clone;
   };
 
-  getCanvas = (arg: { rect?: Rect; attrs?: GroupConfig; bg?: string } = {}): HTMLCanvasElement => {
-    const { rect, attrs, bg } = arg;
-    const clone = this.cloneObjectGroup({ attrs });
-    const canvas = konvaNodeToCanvas({ node: clone, rect, bg });
+  getCanvas = (
+    arg: {
+      rect?: Rect;
+      attrs?: GroupConfig;
+      bg?: string;
+      imageSmoothingEnabled?: boolean;
+      pixelRatio?: number;
+      cache?: { pixelRatio?: number; imageSmoothingEnabled?: boolean };
+    } = {}
+  ): HTMLCanvasElement => {
+    const { rect, attrs, bg, imageSmoothingEnabled, pixelRatio, cache } = arg;
+    const clone = this.cloneObjectGroup({ attrs, cache });
+    const canvas = konvaNodeToCanvas({ node: clone, rect, bg, imageSmoothingEnabled, pixelRatio });
     clone.destroy();
     return canvas;
   };
 
-  getBlob = async (arg: { rect?: Rect; attrs?: GroupConfig; bg?: string } = {}): Promise<Blob> => {
-    const { rect, attrs, bg } = arg;
-    const clone = this.cloneObjectGroup({ attrs });
-    const blob = await konvaNodeToBlob({ node: clone, rect, bg });
+  getBlob = async (
+    arg: {
+      rect?: Rect;
+      attrs?: GroupConfig;
+      bg?: string;
+      imageSmoothingEnabled?: boolean;
+      pixelRatio?: number;
+      cache?: { pixelRatio?: number; imageSmoothingEnabled?: boolean };
+    } = {}
+  ): Promise<Blob> => {
+    const { rect, attrs, bg, imageSmoothingEnabled, pixelRatio, cache } = arg;
+    const clone = this.cloneObjectGroup({ attrs, cache });
+    const blob = await konvaNodeToBlob({ node: clone, rect, bg, imageSmoothingEnabled, pixelRatio });
     return blob;
   };
 
-  getImageData = (arg: { rect?: Rect; attrs?: GroupConfig; bg?: string } = {}): ImageData => {
-    const { rect, attrs, bg } = arg;
-    const clone = this.cloneObjectGroup({ attrs });
-    const imageData = konvaNodeToImageData({ node: clone, rect, bg });
+  getImageData = (
+    arg: {
+      rect?: Rect;
+      attrs?: GroupConfig;
+      bg?: string;
+      imageSmoothingEnabled?: boolean;
+      pixelRatio?: number;
+      cache?: { pixelRatio?: number; imageSmoothingEnabled?: boolean };
+    } = {}
+  ): ImageData => {
+    const { rect, attrs, bg, imageSmoothingEnabled, pixelRatio, cache } = arg;
+    const clone = this.cloneObjectGroup({ attrs, cache });
+    const imageData = konvaNodeToImageData({ node: clone, rect, bg, imageSmoothingEnabled, pixelRatio });
     clone.destroy();
     return imageData;
   };

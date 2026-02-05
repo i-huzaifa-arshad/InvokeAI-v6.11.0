@@ -1,17 +1,27 @@
-import { Flex } from '@invoke-ai/ui-library';
-import { useAppSelector } from 'app/store/storeHooks';
-import { MetadataItem } from 'features/metadata/components/MetadataItem';
-import { MetadataLoRAs } from 'features/metadata/components/MetadataLoRAs';
-import { handlers } from 'features/metadata/util/handlers';
-import { selectActiveTab } from 'features/ui/store/uiSelectors';
-import { memo } from 'react';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { Box, Flex, IconButton } from '@invoke-ai/ui-library';
+import { useAppStore } from 'app/store/storeHooks';
+import { typedMemo } from 'common/util/typedMemo';
+import type {
+  CollectionMetadataHandler,
+  ParsedSuccessData,
+  SingleMetadataHandler,
+  UnrecallableMetadataHandler,
+} from 'features/metadata/parsing';
+import {
+  ImageMetadataHandlers,
+  useCollectionMetadataDatum,
+  useSingleMetadataDatum,
+  useUnrecallableMetadataDatum,
+} from 'features/metadata/parsing';
+import { memo, useCallback } from 'react';
+import { PiArrowBendUpLeftBold } from 'react-icons/pi';
 
 type Props = {
   metadata?: unknown;
 };
 
-const ImageMetadataActions = (props: Props) => {
-  const activeTabName = useAppSelector(selectActiveTab);
+export const ImageMetadataActions = memo((props: Props) => {
   const { metadata } = props;
 
   if (!metadata || Object.keys(metadata).length === 0) {
@@ -19,38 +29,162 @@ const ImageMetadataActions = (props: Props) => {
   }
 
   return (
-    <Flex flexDir="column" pl={8}>
-      <MetadataItem metadata={metadata} handlers={handlers.generationMode} />
-      <MetadataItem metadata={metadata} handlers={handlers.positivePrompt} direction="column" />
-      <MetadataItem metadata={metadata} handlers={handlers.negativePrompt} direction="column" />
-      <MetadataItem metadata={metadata} handlers={handlers.sdxlPositiveStylePrompt} direction="column" />
-      <MetadataItem metadata={metadata} handlers={handlers.sdxlNegativeStylePrompt} direction="column" />
-      <MetadataItem metadata={metadata} handlers={handlers.model} />
-      <MetadataItem metadata={metadata} handlers={handlers.vae} />
-      <MetadataItem metadata={metadata} handlers={handlers.width} />
-      <MetadataItem metadata={metadata} handlers={handlers.height} />
-      <MetadataItem metadata={metadata} handlers={handlers.seed} />
-      <MetadataItem metadata={metadata} handlers={handlers.steps} />
-      <MetadataItem metadata={metadata} handlers={handlers.scheduler} />
-      <MetadataItem metadata={metadata} handlers={handlers.cfgScale} />
-      <MetadataItem metadata={metadata} handlers={handlers.cfgRescaleMultiplier} />
-      <MetadataItem metadata={metadata} handlers={handlers.guidance} />
-      {activeTabName !== 'canvas' && <MetadataItem metadata={metadata} handlers={handlers.strength} />}
-      <MetadataItem metadata={metadata} handlers={handlers.seamlessX} />
-      <MetadataItem metadata={metadata} handlers={handlers.seamlessY} />
-      <MetadataItem metadata={metadata} handlers={handlers.hrfEnabled} />
-      <MetadataItem metadata={metadata} handlers={handlers.hrfMethod} />
-      <MetadataItem metadata={metadata} handlers={handlers.hrfStrength} />
-      <MetadataItem metadata={metadata} handlers={handlers.refinerCFGScale} />
-      <MetadataItem metadata={metadata} handlers={handlers.refinerModel} />
-      <MetadataItem metadata={metadata} handlers={handlers.refinerNegativeAestheticScore} />
-      <MetadataItem metadata={metadata} handlers={handlers.refinerPositiveAestheticScore} />
-      <MetadataItem metadata={metadata} handlers={handlers.refinerScheduler} />
-      <MetadataItem metadata={metadata} handlers={handlers.refinerStart} />
-      <MetadataItem metadata={metadata} handlers={handlers.refinerSteps} />
-      <MetadataLoRAs metadata={metadata} />
+    <Flex flexDir="column" ps={8}>
+      <UnrecallableMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.GenerationMode} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.PositivePrompt} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.NegativePrompt} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.MainModel} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.VAEModel} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.Width} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.Height} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.Seed} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.Steps} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.Scheduler} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.CLIPSkip} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.CFGScale} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.CFGRescaleMultiplier} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.Guidance} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.FluxDypePreset} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.FluxDypeScale} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.FluxDypeExponent} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.DenoisingStrength} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.SeamlessX} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.SeamlessY} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.RefinerModel} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.RefinerCFGScale} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.RefinerPositiveAestheticScore} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.RefinerNegativeAestheticScore} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.RefinerScheduler} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.RefinerDenoisingStart} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.RefinerSteps} />
+      <SingleMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.CanvasLayers} />
+      <CollectionMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.RefImages} />
+      <CollectionMetadataDatum metadata={metadata} handler={ImageMetadataHandlers.LoRAs} />
     </Flex>
   );
-};
+});
 
-export default memo(ImageMetadataActions);
+ImageMetadataActions.displayName = 'ImageMetadataActions';
+
+export const UnrecallableMetadataDatum = typedMemo(
+  <T,>({ metadata, handler }: { metadata: unknown; handler: UnrecallableMetadataHandler<T> }) => {
+    const { data } = useUnrecallableMetadataDatum(metadata, handler);
+
+    if (!data.isParsed) {
+      return null;
+    }
+
+    if (data.isSuccess) {
+      return <UnrecallableMetadataParsed data={data} handler={handler} />;
+    }
+  }
+);
+UnrecallableMetadataDatum.displayName = 'UnrecallableMetadataDatum';
+
+const UnrecallableMetadataParsed = typedMemo(
+  <T,>({ data, handler }: { data: ParsedSuccessData<T>; handler: UnrecallableMetadataHandler<T> }) => {
+    const { LabelComponent, ValueComponent } = handler;
+
+    return (
+      <Box as="span" lineHeight={1}>
+        <LabelComponent i18nKey={handler.i18nKey} />
+        <ValueComponent value={data.value} />
+      </Box>
+    );
+  }
+);
+UnrecallableMetadataParsed.displayName = 'UnrecallableMetadataParsed';
+
+const SingleMetadataDatum = typedMemo(
+  <T,>({ metadata, handler }: { metadata: unknown; handler: SingleMetadataHandler<T> }) => {
+    const { data } = useSingleMetadataDatum(metadata, handler);
+
+    if (!data.isParsed) {
+      return null;
+    }
+
+    if (data.isSuccess) {
+      return <SingleMetadataParsed data={data} handler={handler} />;
+    }
+  }
+);
+SingleMetadataDatum.displayName = 'SingleMetadataDatum';
+
+const SingleMetadataParsed = typedMemo(
+  <T,>({ data, handler }: { data: ParsedSuccessData<T>; handler: SingleMetadataHandler<T> }) => {
+    const store = useAppStore();
+
+    const { LabelComponent, ValueComponent } = handler;
+
+    const onClick = useCallback(() => {
+      handler.recall(data.value, store);
+    }, [data.value, handler, store]);
+
+    return (
+      <Flex gap={2}>
+        <IconButton
+          aria-label="Recall Parameter"
+          icon={<PiArrowBendUpLeftBold />}
+          size="xs"
+          variant="ghost"
+          onClick={onClick}
+        />
+        <Box as="span" lineHeight={1}>
+          <LabelComponent i18nKey={handler.i18nKey} />
+          <ValueComponent value={data.value} />
+        </Box>
+      </Flex>
+    );
+  }
+);
+SingleMetadataParsed.displayName = 'SingleMetadataParsed';
+
+const CollectionMetadataDatum = typedMemo(
+  <T extends any[]>({ metadata, handler }: { metadata: unknown; handler: CollectionMetadataHandler<T> }) => {
+    const { data } = useCollectionMetadataDatum(metadata, handler);
+
+    if (!data.isParsed) {
+      return null;
+    }
+
+    if (data.isSuccess) {
+      return (
+        <>
+          {data.value.map((value, i) => (
+            <CollectionMetadataParsed key={i} value={value} handler={handler} />
+          ))}
+        </>
+      );
+    }
+  }
+);
+CollectionMetadataDatum.displayName = 'CollectionMetadataDatum';
+
+const CollectionMetadataParsed = typedMemo(
+  <T extends any[]>({ value, handler }: { value: T[number]; handler: CollectionMetadataHandler<T> }) => {
+    const store = useAppStore();
+
+    const { LabelComponent, ValueComponent } = handler;
+
+    const onClick = useCallback(() => {
+      handler.recallOne(value, store);
+    }, [handler, store, value]);
+
+    return (
+      <Flex gap={2}>
+        <IconButton
+          aria-label="Recall Parameter"
+          icon={<PiArrowBendUpLeftBold />}
+          size="xs"
+          variant="ghost"
+          onClick={onClick}
+        />
+        <Box as="span" lineHeight={1}>
+          <LabelComponent i18nKey={handler.i18nKey} />
+          <ValueComponent value={value} />
+        </Box>
+      </Flex>
+    );
+  }
+);
+CollectionMetadataParsed.displayName = 'CollectionMetadataParsed';

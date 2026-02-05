@@ -14,7 +14,7 @@ const zXYPosition = z
   .default({ x: 0, y: 0 });
 export type XYPosition = z.infer<typeof zXYPosition>;
 
-const zWorkflowCategory = z.enum(['user', 'default', 'project']);
+const zWorkflowCategory = z.enum(['user', 'default']);
 export type WorkflowCategory = z.infer<typeof zWorkflowCategory>;
 // #endregion
 
@@ -64,7 +64,7 @@ export type ElementId = z.infer<typeof zElementId>;
 const zElementBase = z.object({
   id: zElementId,
   parentId: zElementId.optional(),
-  data: z.undefined(),
+  data: z.undefined().optional(),
 });
 
 export const zNumberComponent = z.enum(['number-input', 'slider', 'number-input-and-slider']);
@@ -74,6 +74,7 @@ export const NODE_FIELD_CLASS_NAME = `form-builder-${NODE_FIELD_TYPE}`;
 const FLOAT_FIELD_SETTINGS_TYPE = 'float-field-config';
 const zNodeFieldFloatSettings = z.object({
   type: z.literal(FLOAT_FIELD_SETTINGS_TYPE).default(FLOAT_FIELD_SETTINGS_TYPE),
+  showShuffle: z.boolean().default(false),
   component: zNumberComponent.default('number-input'),
   min: z.number().optional(),
   max: z.number().optional(),
@@ -84,6 +85,7 @@ export type NodeFieldFloatSettings = z.infer<typeof zNodeFieldFloatSettings>;
 const INTEGER_FIELD_CONFIG_TYPE = 'integer-field-config';
 const zNodeFieldIntegerSettings = z.object({
   type: z.literal(INTEGER_FIELD_CONFIG_TYPE).default(INTEGER_FIELD_CONFIG_TYPE),
+  showShuffle: z.boolean().default(false),
   component: zNumberComponent.default('number-input'),
   min: z.number().optional(),
   max: z.number().optional(),
@@ -271,7 +273,7 @@ export const getDefaultForm = (): BuilderForm => {
 };
 
 const zBuilderForm = z.object({
-  elements: z.record(zFormElement),
+  elements: z.record(z.string(), zFormElement),
   rootElementId: zElementId,
 });
 
@@ -379,7 +381,6 @@ export const zWorkflowV3 = z.object({
   }),
   // Use the validated form schema!
   form: zValidatedBuilderForm,
-  is_published: z.boolean().nullish(),
 });
 export type WorkflowV3 = z.infer<typeof zWorkflowV3>;
 // #endregion

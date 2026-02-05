@@ -1,6 +1,8 @@
+import { objectEquals } from '@observ33r/object-equals';
 import { Mutex } from 'async-mutex';
 import { deepClone } from 'common/util/deepClone';
 import { withResultAsync } from 'common/util/result';
+import { parseify } from 'common/util/serialize';
 import type { CanvasEntityBufferObjectRenderer } from 'features/controlLayers/konva/CanvasEntity/CanvasEntityBufferObjectRenderer';
 import type { CanvasEntityFilterer } from 'features/controlLayers/konva/CanvasEntity/CanvasEntityFilterer';
 import type { CanvasEntityObjectRenderer } from 'features/controlLayers/konva/CanvasEntity/CanvasEntityObjectRenderer';
@@ -9,11 +11,20 @@ import { CanvasModuleBase } from 'features/controlLayers/konva/CanvasModuleBase'
 import type { CanvasSegmentAnythingModule } from 'features/controlLayers/konva/CanvasSegmentAnythingModule';
 import type { CanvasStagingAreaModule } from 'features/controlLayers/konva/CanvasStagingAreaModule';
 import { getKonvaNodeDebugAttrs, loadImage } from 'features/controlLayers/konva/util';
-import type { CanvasImageState } from 'features/controlLayers/store/types';
+import type { CanvasImageState, Dimensions } from 'features/controlLayers/store/types';
 import { t } from 'i18next';
 import Konva from 'konva';
 import type { Logger } from 'roarr';
+import type { JsonObject } from 'roarr/dist/types';
 import { getImageDTOSafe } from 'services/api/endpoints/images';
+
+type CanvasObjectImageConfig = {
+  usePhysicalDimensions: boolean;
+};
+
+const DEFAULT_CONFIG: CanvasObjectImageConfig = {
+  usePhysicalDimensions: false,
+};
 
 export class CanvasObjectImage extends CanvasModuleBase {
   readonly type = 'object_image';
@@ -29,6 +40,9 @@ export class CanvasObjectImage extends CanvasModuleBase {
   readonly log: Logger;
 
   state: CanvasImageState;
+
+  config: CanvasObjectImageConfig = DEFAULT_CONFIG;
+
   konva: {
     group: Konva.Group;
     placeholder: { group: Konva.Group; rect: Konva.Rect; text: Konva.Text };
@@ -94,7 +108,7 @@ export class CanvasObjectImage extends CanvasModuleBase {
     this.state = state;
   }
 
-  updateImageSource = async (imageName: string) => {
+  updateImageSourceByImageName = async (imageName: string) => {
     this.log.trace({ imageName }, 'Updating image source');
 
     this.isLoading = true;
@@ -112,20 +126,49 @@ export class CanvasObjectImage extends CanvasModuleBase {
       return;
     }
 
-    const imageElementResult = await withResultAsync(() => loadImage(imageDTO.image_url, true));
+    const imageElementResult = await withResultAsync(() => loadImage(imageDTO.image_url));
     if (imageElementResult.isErr()) {
       // Image loading failed (e.g. the URL to the "physical" image is invalid)
-      this.onFailedToLoadImage(t('controlLayers.unableToLoadImage', 'Unable to load image'));
+      this.onFailedToLoadImage(
+        t('controlLayers.unableToLoadImage', 'Unable to load image'),
+        parseify(imageElementResult.error)
+      );
       return;
     }
 
     this.imageElement = imageElementResult.value;
 
-    await this.updateImageElement();
+    this.updateImageElement();
   };
 
-  onFailedToLoadImage = (message: string) => {
-    this.log({ image: this.state.image }, message);
+  updateImageSourceByDataURL = async (dataURL: string) => {
+    this.log.trace({ dataURL: `${dataURL.substring(0, 16)}...` }, 'Updating image source');
+
+    this.isLoading = true;
+    this.konva.group.visible(true);
+
+    if (!this.konva.image) {
+      this.konva.placeholder.group.visible(false);
+      this.konva.placeholder.text.text(t('common.loadingImage', 'Loading Image'));
+    }
+
+    const imageElementResult = await withResultAsync(() => loadImage(dataURL));
+    if (imageElementResult.isErr()) {
+      // Image loading failed (e.g. the URL to the "physical" image is invalid)
+      this.onFailedToLoadImage(
+        t('controlLayers.unableToLoadImage', 'Unable to load image'),
+        parseify(imageElementResult.error)
+      );
+      return;
+    }
+
+    this.imageElement = imageElementResult.value;
+
+    this.updateImageElement();
+  };
+
+  onFailedToLoadImage = (message: string, error?: JsonObject) => {
+    this.log.error({ image: this.state.image, error }, message);
     this.konva.image?.visible(false);
     this.isLoading = false;
     this.isError = true;
@@ -133,43 +176,50 @@ export class CanvasObjectImage extends CanvasModuleBase {
     this.konva.placeholder.group.visible(true);
   };
 
-  updateImageElement = async () => {
-    const release = await this.mutex.acquire();
+  getDimensions = (): Dimensions => {
+    if (this.config.usePhysicalDimensions && this.imageElement) {
+      return {
+        width: this.imageElement.width,
+        height: this.imageElement.height,
+      };
+    }
+    return {
+      width: this.state.image.width,
+      height: this.state.image.height,
+    };
+  };
 
-    try {
-      if (this.imageElement) {
-        const { width, height } = this.state.image;
+  updateImageElement = () => {
+    if (this.imageElement) {
+      const { width, height } = this.getDimensions();
 
-        if (this.konva.image) {
-          this.log.trace('Updating Konva image attrs');
-          this.konva.image.setAttrs({
-            image: this.imageElement,
-            width,
-            height,
-            visible: true,
-          });
-        } else {
-          this.log.trace('Creating new Konva image');
-          this.konva.image = new Konva.Image({
-            name: `${this.type}:image`,
-            listening: false,
-            image: this.imageElement,
-            width,
-            height,
-            perfectDrawEnabled: false,
-          });
-          this.konva.group.add(this.konva.image);
-        }
-
-        this.konva.placeholder.rect.setAttrs({ width, height });
-        this.konva.placeholder.text.setAttrs({ width, height, fontSize: width / 16 });
-
-        this.isLoading = false;
-        this.isError = false;
-        this.konva.placeholder.group.visible(false);
+      if (this.konva.image) {
+        this.log.trace('Updating Konva image attrs');
+        this.konva.image.setAttrs({
+          image: this.imageElement,
+          width,
+          height,
+          visible: true,
+        });
+      } else {
+        this.log.trace('Creating new Konva image');
+        this.konva.image = new Konva.Image({
+          name: `${this.type}:image`,
+          listening: false,
+          image: this.imageElement,
+          width,
+          height,
+          perfectDrawEnabled: false,
+        });
+        this.konva.group.add(this.konva.image);
       }
-    } finally {
-      release();
+
+      this.konva.placeholder.rect.setAttrs({ width, height });
+      this.konva.placeholder.text.setAttrs({ width, height, fontSize: width / 16 });
+
+      this.isLoading = false;
+      this.isError = false;
+      this.konva.placeholder.group.visible(false);
     }
   };
 
@@ -178,11 +228,22 @@ export class CanvasObjectImage extends CanvasModuleBase {
       this.log.trace({ state }, 'Updating image');
 
       const { image } = state;
-      const { width, height, image_name } = image;
-      if (force || (this.state.image.image_name !== image_name && !this.isLoading)) {
-        await this.updateImageSource(image_name);
+
+      if (force || (!objectEquals(this.state, state) && !this.isLoading)) {
+        const release = await this.mutex.acquire();
+
+        try {
+          if ('image_name' in image) {
+            await this.updateImageSourceByImageName(image.image_name);
+          } else {
+            await this.updateImageSourceByDataURL(image.dataURL);
+          }
+        } finally {
+          release();
+        }
       }
-      this.konva.image?.setAttrs({ width, height });
+
+      this.konva.image?.setAttrs(this.getDimensions());
       this.state = state;
       return true;
     }

@@ -2,10 +2,11 @@ import type {
   CanvasControlLayerState,
   CanvasInpaintMaskState,
   CanvasRasterLayerState,
-  CanvasReferenceImageState,
   CanvasRegionalGuidanceState,
+  RefImageState,
 } from 'features/controlLayers/store/types';
-import type { MainModelConfig } from 'services/api/types';
+import type { ModelIdentifierField } from 'features/nodes/types/common';
+import type { AnyModelConfig, MainModelConfig } from 'services/api/types';
 
 const WARNINGS = {
   UNSUPPORTED_MODEL: 'controlLayers.warnings.unsupportedModel',
@@ -58,16 +59,27 @@ export const getRegionalGuidanceWarnings = (
       }
     }
 
-    entity.referenceImages.forEach(({ ipAdapter }) => {
-      if (!ipAdapter.model) {
+    if (model.base === 'z-image') {
+      // Z-Image has similar limitations to FLUX - no negative prompts via CFG by default
+      // Reference images (IP Adapters) are not supported for Z-Image
+      if (entity.referenceImages.length > 0) {
+        warnings.push(WARNINGS.RG_REFERENCE_IMAGES_NOT_SUPPORTED);
+      }
+      if (entity.autoNegative) {
+        warnings.push(WARNINGS.RG_AUTO_NEGATIVE_NOT_SUPPORTED);
+      }
+    }
+
+    entity.referenceImages.forEach(({ config }) => {
+      if (!config.model) {
         // No model selected
         warnings.push(WARNINGS.IP_ADAPTER_NO_MODEL_SELECTED);
-      } else if (ipAdapter.model.base !== model.base) {
+      } else if (config.model.base !== model.base) {
         // Supported model architecture but doesn't match
         warnings.push(WARNINGS.IP_ADAPTER_INCOMPATIBLE_BASE_MODEL);
       }
 
-      if (!ipAdapter.image) {
+      if (!config.image) {
         // No image selected
         warnings.push(WARNINGS.IP_ADAPTER_NO_IMAGE_SELECTED);
       }
@@ -77,8 +89,29 @@ export const getRegionalGuidanceWarnings = (
   return warnings;
 };
 
+export const areBasesCompatibleForRefImage = (
+  first?: ModelIdentifierField | AnyModelConfig | null,
+  second?: ModelIdentifierField | AnyModelConfig | null
+): boolean => {
+  if (!first || !second) {
+    return false;
+  }
+  if (first.base !== second.base) {
+    return false;
+  }
+  if (
+    first.base === 'flux' &&
+    (first.name.toLowerCase().includes('kontext') || second.name.toLowerCase().includes('kontext')) &&
+    first.key !== second.key
+  ) {
+    // FLUX Kontext requires the main model and the reference image model to be the same model
+    return false;
+  }
+  return true;
+};
+
 export const getGlobalReferenceImageWarnings = (
-  entity: CanvasReferenceImageState,
+  entity: RefImageState,
   model: MainModelConfig | null | undefined
 ): WarningTKey[] => {
   const warnings: WarningTKey[] = [];
@@ -90,17 +123,20 @@ export const getGlobalReferenceImageWarnings = (
       return warnings;
     }
 
-    const { ipAdapter } = entity;
+    const { config } = entity;
 
-    if (!ipAdapter.model) {
-      // No model selected
-      warnings.push(WARNINGS.IP_ADAPTER_NO_MODEL_SELECTED);
-    } else if (ipAdapter.model.base !== model.base) {
-      // Supported model architecture but doesn't match
-      warnings.push(WARNINGS.IP_ADAPTER_INCOMPATIBLE_BASE_MODEL);
+    // FLUX.2 reference images don't require a model - it's built-in
+    if (config.type !== 'flux2_reference_image') {
+      if (!('model' in config) || !config.model) {
+        // No model selected
+        warnings.push(WARNINGS.IP_ADAPTER_NO_MODEL_SELECTED);
+      } else if (!areBasesCompatibleForRefImage(config.model, model)) {
+        // Supported model architecture but doesn't match
+        warnings.push(WARNINGS.IP_ADAPTER_INCOMPATIBLE_BASE_MODEL);
+      }
     }
 
-    if (!entity.ipAdapter.image) {
+    if (!entity.config.image) {
       // No image selected
       warnings.push(WARNINGS.IP_ADAPTER_NO_IMAGE_SELECTED);
     }
@@ -132,7 +168,7 @@ export const getControlLayerWarnings = (
       warnings.push(WARNINGS.CONTROL_ADAPTER_INCOMPATIBLE_BASE_MODEL);
     } else if (
       model.base === 'flux' &&
-      model.variant === 'inpaint' &&
+      model.variant === 'dev_fill' &&
       entity.controlAdapter.model.type === 'control_lora'
     ) {
       // FLUX inpaint variants are FLUX Fill models - not compatible w/ Control LoRA

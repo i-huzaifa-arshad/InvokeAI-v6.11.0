@@ -3,12 +3,12 @@ import { skipToken } from '@reduxjs/toolkit/query';
 import { EMPTY_OBJECT } from 'app/store/constants';
 import { useAppSelector } from 'app/store/storeHooks';
 import { useAssertSingleton } from 'common/hooks/useAssertSingleton';
+import { debounce } from 'es-toolkit/compat';
 import { getInitialWorkflow } from 'features/nodes/store/nodesSlice';
 import { selectNodesSlice, selectWorkflowId } from 'features/nodes/store/selectors';
 import type { NodesState } from 'features/nodes/store/types';
 import type { WorkflowV3 } from 'features/nodes/types/workflow';
 import { buildWorkflowFast } from 'features/nodes/util/workflow/buildWorkflow';
-import { debounce } from 'lodash-es';
 import { atom, computed } from 'nanostores';
 import { useEffect, useMemo } from 'react';
 import { useGetWorkflowQuery } from 'services/api/endpoints/workflows';
@@ -44,9 +44,8 @@ const queryOptions = {
     if (!currentData) {
       return { serverWorkflowHash: null };
     }
-    const { is_published: _is_published, ...serverWorkflow } = currentData.workflow;
     return {
-      serverWorkflowHash: stableHash(serverWorkflow),
+      serverWorkflowHash: stableHash(currentData.workflow),
     };
   },
 } satisfies Parameters<typeof useGetWorkflowQuery>[1];

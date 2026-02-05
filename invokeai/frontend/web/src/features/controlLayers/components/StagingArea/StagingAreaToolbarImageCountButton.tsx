@@ -1,22 +1,27 @@
 import { Button } from '@invoke-ai/ui-library';
-import { useAppSelector } from 'app/store/storeHooks';
-import { selectImageCount, selectStagedImageIndex } from 'features/controlLayers/store/canvasStagingAreaSlice';
+import { useStore } from '@nanostores/react';
+import { useStagingAreaContext } from 'features/controlLayers/components/StagingArea/context';
+import { useCanvasManager } from 'features/controlLayers/contexts/CanvasManagerProviderGate';
 import { memo, useMemo } from 'react';
 
 export const StagingAreaToolbarImageCountButton = memo(() => {
-  const index = useAppSelector(selectStagedImageIndex);
-  const imageCount = useAppSelector(selectImageCount);
+  const canvasManager = useCanvasManager();
+  const shouldShowStagedImage = useStore(canvasManager.stagingArea.$shouldShowStagedImage);
+
+  const ctx = useStagingAreaContext();
+  const selectedItem = useStore(ctx.$selectedItem);
+  const itemCount = useStore(ctx.$itemCount);
 
   const counterText = useMemo(() => {
-    if (imageCount > 0) {
-      return `${(index ?? 0) + 1} of ${imageCount}`;
+    if (itemCount > 0 && selectedItem !== null) {
+      return `${selectedItem.index + 1} of ${itemCount}`;
     } else {
       return `0 of 0`;
     }
-  }, [imageCount, index]);
+  }, [itemCount, selectedItem]);
 
   return (
-    <Button colorScheme="base" pointerEvents="none" minW={28}>
+    <Button colorScheme="base" pointerEvents="none" minW={28} isDisabled={!shouldShowStagedImage}>
       {counterText}
     </Button>
   );

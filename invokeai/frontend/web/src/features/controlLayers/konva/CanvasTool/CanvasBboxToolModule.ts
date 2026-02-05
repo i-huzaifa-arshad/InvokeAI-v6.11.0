@@ -1,16 +1,19 @@
 import { roundToMultiple, roundToMultipleMin } from 'common/util/roundDownToMultiple';
+import { noop } from 'es-toolkit/compat';
 import type { CanvasManager } from 'features/controlLayers/konva/CanvasManager';
 import { CanvasModuleBase } from 'features/controlLayers/konva/CanvasModuleBase';
 import type { CanvasToolModule } from 'features/controlLayers/konva/CanvasTool/CanvasToolModule';
-import { fitRectToGrid, getKonvaNodeDebugAttrs, getPrefixedId } from 'features/controlLayers/konva/util';
+import {
+  areStageAttrsGonnaExplode,
+  fitRectToGrid,
+  getKonvaNodeDebugAttrs,
+  getPrefixedId,
+} from 'features/controlLayers/konva/util';
 import { selectBboxOverlay } from 'features/controlLayers/store/canvasSettingsSlice';
 import { selectModel } from 'features/controlLayers/store/paramsSlice';
 import { selectBbox } from 'features/controlLayers/store/selectors';
 import type { Coordinate, Rect, Tool } from 'features/controlLayers/store/types';
-import type { ModelIdentifierField } from 'features/nodes/types/common';
-import { API_BASE_MODELS } from 'features/parameters/types/constants';
 import Konva from 'konva';
-import { noop } from 'lodash-es';
 import { atom } from 'nanostores';
 import type { Logger } from 'roarr';
 import { assert } from 'tsafe';
@@ -25,7 +28,6 @@ const ALL_ANCHORS: string[] = [
   'bottom-center',
   'bottom-right',
 ];
-const CORNER_ANCHORS: string[] = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
 const NO_ANCHORS: string[] = [];
 
 /**
@@ -60,6 +62,11 @@ export class CanvasBboxToolModule extends CanvasModuleBase {
    * used to lock the aspect ratio.
    */
   $aspectRatioBuffer = atom(1);
+
+  /**
+   * Buffer to store the visibility of the bbox.
+   */
+  $isBboxHidden = atom(false);
 
   constructor(parent: CanvasToolModule) {
     super();
@@ -186,6 +193,9 @@ export class CanvasBboxToolModule extends CanvasModuleBase {
 
     // Update on busy state changes
     this.subscriptions.add(this.manager.$isBusy.listen(this.render));
+
+    // Listen for stage changes to update the bbox's visibility
+    this.subscriptions.add(this.$isBboxHidden.listen(this.render));
   }
 
   // This is a noop. The cursor is changed when the cursor enters or leaves the bbox.
@@ -201,12 +211,14 @@ export class CanvasBboxToolModule extends CanvasModuleBase {
   };
 
   /**
-   * Renders the bbox. The bbox is only visible when the tool is set to 'bbox'.
+   * Renders the bbox.
    */
   render = () => {
     const tool = this.manager.tool.$tool.get();
 
     const { x, y, width, height } = this.manager.stateApi.runSelector(selectBbox).rect;
+
+    this.konva.group.visible(!this.$isBboxHidden.get());
 
     // We need to reach up to the preview layer to enable/disable listening so that the bbox can be interacted with.
     // If the mangaer is busy, we disable listening so the bbox cannot be interacted with.
@@ -224,20 +236,14 @@ export class CanvasBboxToolModule extends CanvasModuleBase {
 
     this.syncOverlay();
 
-    const model = this.manager.stateApi.runSelector(selectModel);
-
     this.konva.transformer.setAttrs({
       listening: tool === 'bbox',
-      enabledAnchors: this.getEnabledAnchors(tool, model),
+      enabledAnchors: this.getEnabledAnchors(tool),
     });
   };
 
-  getEnabledAnchors = (tool: Tool, model?: ModelIdentifierField | null): string[] => {
+  getEnabledAnchors = (tool: Tool): string[] => {
     if (tool !== 'bbox') {
-      return NO_ANCHORS;
-    }
-    if (model?.base && API_BASE_MODELS.includes(model.base)) {
-      // The bbox is not resizable in these modes
       return NO_ANCHORS;
     }
     return ALL_ANCHORS;
@@ -253,6 +259,9 @@ export class CanvasBboxToolModule extends CanvasModuleBase {
     }
 
     const stageAttrs = this.manager.stage.$stageAttrs.get();
+    if (areStageAttrsGonnaExplode(stageAttrs)) {
+      return;
+    }
 
     this.konva.overlayRect.setAttrs({
       x: -stageAttrs.x / stageAttrs.scale,
@@ -326,9 +335,23 @@ export class CanvasBboxToolModule extends CanvasModuleBase {
     let width = roundToMultipleMin(this.konva.proxyRect.width() * this.konva.proxyRect.scaleX(), gridSize);
     let height = roundToMultipleMin(this.konva.proxyRect.height() * this.konva.proxyRect.scaleY(), gridSize);
 
-    // If shift is held and we are resizing from a corner, retain aspect ratio - needs special handling. We skip this
-    // if alt/opt is held - this requires math too big for my brain.
-    if (shift && CORNER_ANCHORS.includes(anchor) && !alt) {
+    // When resizing the bbox using the transformer, we may need to do some extra math to maintain the current aspect
+    // ratio. Need to check a few things to determine if we should be maintaining the aspect ratio or not.
+    let shouldMaintainAspectRatio = false;
+
+    if (alt) {
+      // If alt is held, we are doing center-anchored transforming. In this case, maintaining aspect ratio is rather
+      // complicated.
+      shouldMaintainAspectRatio = false;
+    } else if (this.manager.stateApi.getBbox().aspectRatio.isLocked) {
+      // When the aspect ratio is locked, holding shift means we SHOULD NOT maintain the aspect ratio
+      shouldMaintainAspectRatio = !shift;
+    } else {
+      // When the aspect ratio is not locked, holding shift means we SHOULD maintain aspect ratio
+      shouldMaintainAspectRatio = shift;
+    }
+
+    if (shouldMaintainAspectRatio) {
       // Fit the bbox to the last aspect ratio
       let fittedWidth = Math.sqrt(width * height * this.$aspectRatioBuffer.get());
       let fittedHeight = fittedWidth / this.$aspectRatioBuffer.get();
@@ -369,7 +392,7 @@ export class CanvasBboxToolModule extends CanvasModuleBase {
 
     // Update the aspect ratio buffer whenever the shift key is not held - this allows for a nice UX where you can start
     // a transform, get the right aspect ratio, then hold shift to lock it in.
-    if (!shift) {
+    if (!shouldMaintainAspectRatio) {
       this.$aspectRatioBuffer.set(bboxRect.width / bboxRect.height);
     }
   };
@@ -469,5 +492,9 @@ export class CanvasBboxToolModule extends CanvasModuleBase {
     this.subscriptions.forEach((unsubscribe) => unsubscribe());
     this.subscriptions.clear();
     this.konva.group.destroy();
+  };
+
+  toggleBboxVisibility = () => {
+    this.$isBboxHidden.set(!this.$isBboxHidden.get());
   };
 }

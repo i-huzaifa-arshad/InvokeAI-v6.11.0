@@ -9,22 +9,35 @@ import {
   Switch,
   Text,
 } from '@invoke-ai/ui-library';
-import { useAppDispatch } from 'app/store/storeHooks';
+import { useAppDispatch, useAppSelector } from 'app/store/storeHooks';
 import { InformationalPopover } from 'common/components/InformationalPopover/InformationalPopover';
-import { loraDeleted, loraIsEnabledChanged, loraWeightChanged } from 'features/controlLayers/store/lorasSlice';
+import {
+  buildSelectLoRA,
+  DEFAULT_LORA_WEIGHT_CONFIG,
+  loraDeleted,
+  loraIsEnabledChanged,
+  loraWeightChanged,
+} from 'features/controlLayers/store/lorasSlice';
 import type { LoRA } from 'features/controlLayers/store/types';
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { PiTrashSimpleBold } from 'react-icons/pi';
 import { useGetModelConfigQuery } from 'services/api/endpoints/models';
 
-type LoRACardProps = {
-  lora: LoRA;
-};
+const MARKS = [-1, 0, 1, 2];
 
-const marks = [-1, 0, 1, 2];
+export const LoRACard = memo((props: { id: string }) => {
+  const selectLoRA = useMemo(() => buildSelectLoRA(props.id), [props.id]);
+  const lora = useAppSelector(selectLoRA);
 
-export const LoRACard = memo((props: LoRACardProps) => {
-  const { lora } = props;
+  if (!lora) {
+    return null;
+  }
+  return <LoRAContent lora={lora} />;
+});
+
+LoRACard.displayName = 'LoRACard';
+
+const LoRAContent = memo(({ lora }: { lora: LoRA }) => {
   const dispatch = useAppDispatch();
   const { data: loraConfig } = useGetModelConfigQuery(lora.model.key);
 
@@ -67,22 +80,24 @@ export const LoRACard = memo((props: LoRACardProps) => {
           <CompositeSlider
             value={lora.weight}
             onChange={handleChange}
-            min={-1}
-            max={2}
-            step={0.01}
-            marks={marks}
-            defaultValue={0.75}
+            min={DEFAULT_LORA_WEIGHT_CONFIG.sliderMin}
+            max={DEFAULT_LORA_WEIGHT_CONFIG.sliderMax}
+            step={DEFAULT_LORA_WEIGHT_CONFIG.coarseStep}
+            fineStep={DEFAULT_LORA_WEIGHT_CONFIG.fineStep}
+            marks={MARKS}
+            defaultValue={DEFAULT_LORA_WEIGHT_CONFIG.initial}
             isDisabled={!lora.isEnabled}
           />
           <CompositeNumberInput
             value={lora.weight}
             onChange={handleChange}
-            min={-10}
-            max={10}
-            step={0.01}
+            min={DEFAULT_LORA_WEIGHT_CONFIG.numberInputMin}
+            max={DEFAULT_LORA_WEIGHT_CONFIG.numberInputMax}
+            step={DEFAULT_LORA_WEIGHT_CONFIG.coarseStep}
+            fineStep={DEFAULT_LORA_WEIGHT_CONFIG.fineStep}
             w={20}
             flexShrink={0}
-            defaultValue={0.75}
+            defaultValue={DEFAULT_LORA_WEIGHT_CONFIG.initial}
             isDisabled={!lora.isEnabled}
           />
         </CardBody>
@@ -91,4 +106,4 @@ export const LoRACard = memo((props: LoRACardProps) => {
   );
 });
 
-LoRACard.displayName = 'LoRACard';
+LoRAContent.displayName = 'LoRAContent';

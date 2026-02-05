@@ -1,11 +1,6 @@
 import { logger } from 'app/logging/logger';
-import type { AppStartListening } from 'app/store/middleware/listenerMiddleware';
-import type { AppDispatch, RootState } from 'app/store/store';
-import {
-  controlLayerModelChanged,
-  referenceImageIPAdapterModelChanged,
-  rgIPAdapterModelChanged,
-} from 'features/controlLayers/store/canvasSlice';
+import type { AppDispatch, AppStartListening, RootState } from 'app/store/store';
+import { controlLayerModelChanged, rgRefImageModelChanged } from 'features/controlLayers/store/canvasSlice';
 import { loraDeleted } from 'features/controlLayers/store/lorasSlice';
 import {
   clipEmbedModelSelected,
@@ -15,10 +10,21 @@ import {
   t5EncoderModelSelected,
   vaeSelected,
 } from 'features/controlLayers/store/paramsSlice';
+import { refImageModelChanged, selectRefImagesSlice } from 'features/controlLayers/store/refImagesSlice';
 import { selectCanvasSlice } from 'features/controlLayers/store/selectors';
-import { getEntityIdentifier } from 'features/controlLayers/store/types';
+import {
+  getEntityIdentifier,
+  isFLUXReduxConfig,
+  isIPAdapterConfig,
+  isRegionalGuidanceFLUXReduxConfig,
+  isRegionalGuidanceIPAdapterConfig,
+} from 'features/controlLayers/store/types';
 import { modelSelected } from 'features/parameters/store/actions';
-import { postProcessingModelChanged, upscaleModelChanged } from 'features/parameters/store/upscaleSlice';
+import {
+  postProcessingModelChanged,
+  tileControlnetModelChanged,
+  upscaleModelChanged,
+} from 'features/parameters/store/upscaleSlice';
 import {
   zParameterCLIPEmbedModel,
   zParameterSpandrelImageToImageModel,
@@ -29,8 +35,9 @@ import type { Logger } from 'roarr';
 import { modelConfigsAdapterSelectors, modelsApi } from 'services/api/endpoints/models';
 import type { AnyModelConfig } from 'services/api/types';
 import {
-  isCLIPEmbedModelConfig,
+  isCLIPEmbedModelConfigOrSubmodel,
   isControlLayerModelConfig,
+  isControlNetModelConfig,
   isFluxReduxModelConfig,
   isFluxVAEModelConfig,
   isIPAdapterModelConfig,
@@ -39,7 +46,7 @@ import {
   isNonRefinerMainModelConfig,
   isRefinerMainModelModelConfig,
   isSpandrelImageToImageModelConfig,
-  isT5EncoderModelConfig,
+  isT5EncoderModelConfigOrSubmodel,
 } from 'services/api/types';
 import type { JsonObject } from 'type-fest';
 
@@ -74,6 +81,7 @@ export const addModelsLoadedListener = (startAppListening: AppStartListening) =>
       handleControlAdapterModels(models, state, dispatch, log);
       handlePostProcessingModel(models, state, dispatch, log);
       handleUpscaleModel(models, state, dispatch, log);
+      handleTileControlNetModel(models, state, dispatch, log);
       handleIPAdapterModels(models, state, dispatch, log);
       handleT5EncoderModels(models, state, dispatch, log);
       handleCLIPEmbedModels(models, state, dispatch, log);
@@ -109,19 +117,6 @@ const handleMainModels: ModelHandler = (models, state, dispatch, log) => {
   // If the current model is available, we don't need to do anything
   if (allMainModels.some((m) => m.key === selectedMainModel?.key)) {
     return;
-  }
-
-  // If we have a default model, try to use it
-  if (state.config.sd.defaultModel) {
-    const defaultModel = allMainModels.find((m) => m.key === state.config.sd.defaultModel);
-    if (defaultModel) {
-      log.debug(
-        { selectedMainModel, defaultModel },
-        'No selected main model or selected main model is not available, selecting default model'
-      );
-      dispatch(modelSelected(defaultModel));
-      return;
-    }
   }
 
   log.debug(
@@ -210,12 +205,12 @@ const handleControlAdapterModels: ModelHandler = (models, state, dispatch, log) 
 
 const handleIPAdapterModels: ModelHandler = (models, state, dispatch, log) => {
   const ipaModels = models.filter(isIPAdapterModelConfig);
-  selectCanvasSlice(state).referenceImages.entities.forEach((entity) => {
-    if (entity.ipAdapter.type !== 'ip_adapter') {
+  selectRefImagesSlice(state).entities.forEach((entity) => {
+    if (!isIPAdapterConfig(entity.config)) {
       return;
     }
 
-    const selectedIPAdapterModel = entity.ipAdapter.model;
+    const selectedIPAdapterModel = entity.config.model;
     // `null` is a valid IP adapter model - no need to do anything.
     if (!selectedIPAdapterModel) {
       return;
@@ -225,16 +220,16 @@ const handleIPAdapterModels: ModelHandler = (models, state, dispatch, log) => {
       return;
     }
     log.debug({ selectedIPAdapterModel }, 'Selected IP adapter model is not available, clearing');
-    dispatch(referenceImageIPAdapterModelChanged({ entityIdentifier: getEntityIdentifier(entity), modelConfig: null }));
+    dispatch(refImageModelChanged({ id: entity.id, modelConfig: null }));
   });
 
   selectCanvasSlice(state).regionalGuidance.entities.forEach((entity) => {
-    entity.referenceImages.forEach(({ id: referenceImageId, ipAdapter }) => {
-      if (ipAdapter.type !== 'ip_adapter') {
+    entity.referenceImages.forEach(({ id: referenceImageId, config }) => {
+      if (!isRegionalGuidanceIPAdapterConfig(config)) {
         return;
       }
 
-      const selectedIPAdapterModel = ipAdapter.model;
+      const selectedIPAdapterModel = config.model;
       // `null` is a valid IP adapter model - no need to do anything.
       if (!selectedIPAdapterModel) {
         return;
@@ -245,7 +240,7 @@ const handleIPAdapterModels: ModelHandler = (models, state, dispatch, log) => {
       }
       log.debug({ selectedIPAdapterModel }, 'Selected IP adapter model is not available, clearing');
       dispatch(
-        rgIPAdapterModelChanged({ entityIdentifier: getEntityIdentifier(entity), referenceImageId, modelConfig: null })
+        rgRefImageModelChanged({ entityIdentifier: getEntityIdentifier(entity), referenceImageId, modelConfig: null })
       );
     });
   });
@@ -254,11 +249,11 @@ const handleIPAdapterModels: ModelHandler = (models, state, dispatch, log) => {
 const handleFLUXReduxModels: ModelHandler = (models, state, dispatch, log) => {
   const fluxReduxModels = models.filter(isFluxReduxModelConfig);
 
-  selectCanvasSlice(state).referenceImages.entities.forEach((entity) => {
-    if (entity.ipAdapter.type !== 'flux_redux') {
+  selectRefImagesSlice(state).entities.forEach((entity) => {
+    if (!isFLUXReduxConfig(entity.config)) {
       return;
     }
-    const selectedFLUXReduxModel = entity.ipAdapter.model;
+    const selectedFLUXReduxModel = entity.config.model;
     // `null` is a valid FLUX Redux model - no need to do anything.
     if (!selectedFLUXReduxModel) {
       return;
@@ -268,16 +263,16 @@ const handleFLUXReduxModels: ModelHandler = (models, state, dispatch, log) => {
       return;
     }
     log.debug({ selectedFLUXReduxModel }, 'Selected FLUX Redux model is not available, clearing');
-    dispatch(referenceImageIPAdapterModelChanged({ entityIdentifier: getEntityIdentifier(entity), modelConfig: null }));
+    dispatch(refImageModelChanged({ id: entity.id, modelConfig: null }));
   });
 
   selectCanvasSlice(state).regionalGuidance.entities.forEach((entity) => {
-    entity.referenceImages.forEach(({ id: referenceImageId, ipAdapter }) => {
-      if (ipAdapter.type !== 'flux_redux') {
+    entity.referenceImages.forEach(({ id: referenceImageId, config }) => {
+      if (!isRegionalGuidanceFLUXReduxConfig(config)) {
         return;
       }
 
-      const selectedFLUXReduxModel = ipAdapter.model;
+      const selectedFLUXReduxModel = config.model;
       // `null` is a valid FLUX Redux model - no need to do anything.
       if (!selectedFLUXReduxModel) {
         return;
@@ -288,7 +283,7 @@ const handleFLUXReduxModels: ModelHandler = (models, state, dispatch, log) => {
       }
       log.debug({ selectedFLUXReduxModel }, 'Selected FLUX Redux model is not available, clearing');
       dispatch(
-        rgIPAdapterModelChanged({ entityIdentifier: getEntityIdentifier(entity), referenceImageId, modelConfig: null })
+        rgRefImageModelChanged({ entityIdentifier: getEntityIdentifier(entity), referenceImageId, modelConfig: null })
       );
     });
   });
@@ -348,9 +343,49 @@ const handleUpscaleModel: ModelHandler = (models, state, dispatch, log) => {
   }
 };
 
+const handleTileControlNetModel: ModelHandler = (models, state, dispatch, log) => {
+  const selectedTileControlNetModel = state.upscale.tileControlnetModel;
+  const controlNetModels = models.filter(isControlNetModelConfig);
+
+  // If the currently selected model is available, we don't need to do anything
+  if (selectedTileControlNetModel && controlNetModels.some((m) => m.key === selectedTileControlNetModel.key)) {
+    return;
+  }
+
+  // The only way we have to identify a model as a tile model is by its name containing 'tile' :)
+  const tileModel = controlNetModels.find((m) => m.name.toLowerCase().includes('tile'));
+
+  // If we have a tile model, select it
+  if (tileModel) {
+    log.debug(
+      { selectedTileControlNetModel, tileModel },
+      'No selected tile ControlNet model or selected model is not available, selecting tile model'
+    );
+    dispatch(tileControlnetModelChanged(tileModel));
+    return;
+  }
+
+  // Otherwise, select the first available ControlNet model
+  const firstModel = controlNetModels[0] || null;
+  if (firstModel) {
+    log.debug(
+      { selectedTileControlNetModel, firstModel },
+      'No tile ControlNet model found, selecting first available ControlNet model'
+    );
+    dispatch(tileControlnetModelChanged(firstModel));
+    return;
+  }
+
+  // No available models, we should clear the selected model - but only if we have one selected
+  if (selectedTileControlNetModel) {
+    log.debug({ selectedTileControlNetModel }, 'Selected tile ControlNet model is not available, clearing');
+    dispatch(tileControlnetModelChanged(null));
+  }
+};
+
 const handleT5EncoderModels: ModelHandler = (models, state, dispatch, log) => {
   const selectedT5EncoderModel = state.params.t5EncoderModel;
-  const t5EncoderModels = models.filter((m) => isT5EncoderModelConfig(m));
+  const t5EncoderModels = models.filter((m) => isT5EncoderModelConfigOrSubmodel(m));
 
   // If the currently selected model is available, we don't need to do anything
   if (selectedT5EncoderModel && t5EncoderModels.some((m) => m.key === selectedT5EncoderModel.key)) {
@@ -378,7 +413,7 @@ const handleT5EncoderModels: ModelHandler = (models, state, dispatch, log) => {
 
 const handleCLIPEmbedModels: ModelHandler = (models, state, dispatch, log) => {
   const selectedCLIPEmbedModel = state.params.clipEmbedModel;
-  const CLIPEmbedModels = models.filter((m) => isCLIPEmbedModelConfig(m));
+  const CLIPEmbedModels = models.filter((m) => isCLIPEmbedModelConfigOrSubmodel(m));
 
   // If the currently selected model is available, we don't need to do anything
   if (selectedCLIPEmbedModel && CLIPEmbedModels.some((m) => m.key === selectedCLIPEmbedModel.key)) {

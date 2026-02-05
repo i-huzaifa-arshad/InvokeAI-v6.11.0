@@ -1,11 +1,11 @@
 import type { Property } from 'csstype';
+import { clamp } from 'es-toolkit/compat';
 import type { CanvasManager } from 'features/controlLayers/konva/CanvasManager';
 import { CanvasModuleBase } from 'features/controlLayers/konva/CanvasModuleBase';
 import { getKonvaNodeDebugAttrs, getPrefixedId, getRectUnion } from 'features/controlLayers/konva/util';
 import type { Coordinate, Dimensions, Rect, StageAttrs } from 'features/controlLayers/store/types';
 import Konva from 'konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
-import { clamp } from 'lodash-es';
 import { atom, computed } from 'nanostores';
 import type { Logger } from 'roarr';
 
@@ -42,7 +42,7 @@ const DEFAULT_CONFIG: CanvasStageModuleConfig = {
   SCALE_FACTOR: 0.999,
   FIT_LAYERS_TO_STAGE_PADDING_PX: 48,
   SCALE_SNAP_POINTS: [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5],
-  SCALE_SNAP_TOLERANCE: 0.05,
+  SCALE_SNAP_TOLERANCE: 0.02,
 };
 
 export class CanvasStageModule extends CanvasModuleBase {
@@ -57,6 +57,7 @@ export class CanvasStageModule extends CanvasModuleBase {
   private _intendedScale: number = 1;
   private _activeSnapPoint: number | null = null;
   private _snapTimeout: number | null = null;
+  private _lastScrollEventTimestamp: number | null = null;
 
   container: HTMLDivElement;
   konva: { stage: Konva.Stage };
@@ -124,9 +125,14 @@ export class CanvasStageModule extends CanvasModuleBase {
     this.konva.stage.on('dragmove', this.onStageDragMove);
     this.konva.stage.on('dragend', this.onStageDragEnd);
 
-    // Start dragging the stage when the middle mouse button is clicked. We do not need to listen for 'pointerdown' to
-    // do cleanup - that is done in onStageDragEnd.
+    // Start dragging the stage when the middle mouse button is clicked and stop dragging when it's released.
+    // We _also_ stop dragging on dragend - but in case the user doesn't actually start a drag (just clicks MMB once),
+    // we still need to stop dragging.
+    //
+    // Why start dragging on pointerdown instead of dragstart? Because it allows us to immediately show the cursor as
+    // grabbing, instead of waiting for the user to actually move the mouse to start the drag. Minor UX affordance.
     this.konva.stage.on('pointerdown', this.onStagePointerDown);
+    this.konva.stage.on('pointerup', this.onStagePointerUp);
 
     this.subscriptions.add(() => this.konva.stage.off('wheel', this.onStageMouseWheel));
     this.subscriptions.add(() => this.konva.stage.off('dragmove', this.onStageDragMove));
@@ -153,36 +159,36 @@ export class CanvasStageModule extends CanvasModuleBase {
     // If the stage _had_ no size just before this function was called, that means we've just mounted the stage or
     // maybe un-hidden it. In that case, the user is about to see the stage for the first time, so we should fit the
     // layers to the stage. If we don't do this, the layers will not be centered.
-    const shouldFitLayersAfterFittingStage = this.konva.stage.width() === 0 || this.konva.stage.height() === 0;
+    if (this.konva.stage.width() === 0 || this.konva.stage.height() === 0) {
+      // This fit must happen before the stage size is set, else we can end up with a brief flash of an incorrectly
+      // sized and scaled stage.
+      this.fitLayersToStage({ animate: false, targetWidth: containerWidth, targetHeight: containerHeight });
+    }
 
     this.konva.stage.width(containerWidth);
     this.konva.stage.height(containerHeight);
     this.syncStageAttrs();
-
-    if (shouldFitLayersAfterFittingStage) {
-      this.fitLayersToStage();
-    }
   };
 
   /**
    * Fits the bbox to the stage. This will center the bbox and scale it to fit the stage with some padding.
    */
-  fitBboxToStage = (): void => {
+  fitBboxToStage = (options?: { animate?: boolean; targetWidth?: number; targetHeight?: number }): void => {
     const { rect } = this.manager.stateApi.getBbox();
     this.log.trace({ rect }, 'Fitting bbox to stage');
-    this.fitRect(rect);
+    this.fitRect(rect, options);
   };
 
   /**
    * Fits the visible canvas to the stage. This will center the canvas and scale it to fit the stage with some padding.
    */
-  fitLayersToStage = (): void => {
+  fitLayersToStage = (options?: { animate?: boolean; targetWidth?: number; targetHeight?: number }): void => {
     const rect = this.manager.compositor.getVisibleRectOfType();
     if (rect.width === 0 || rect.height === 0) {
-      this.fitBboxToStage();
+      this.fitBboxToStage(options);
     } else {
       this.log.trace({ rect }, 'Fitting layers to stage');
-      this.fitRect(rect);
+      this.fitRect(rect, options);
     }
   };
 
@@ -190,12 +196,12 @@ export class CanvasStageModule extends CanvasModuleBase {
    * Fits the bbox and layers to the stage. The union of the bbox and the visible layers will be centered and scaled
    * to fit the stage with some padding.
    */
-  fitBboxAndLayersToStage = (): void => {
+  fitBboxAndLayersToStage = (options?: { animate?: boolean; targetWidth?: number; targetHeight?: number }): void => {
     const layersRect = this.manager.compositor.getVisibleRectOfType();
     const bboxRect = this.manager.stateApi.getBbox().rect;
     const unionRect = getRectUnion(layersRect, bboxRect);
     this.log.trace({ bboxRect, layersRect, unionRect }, 'Fitting bbox and layers to stage');
-    this.fitRect(unionRect);
+    this.fitRect(unionRect, options);
   };
 
   /**
@@ -203,16 +209,22 @@ export class CanvasStageModule extends CanvasModuleBase {
    *
    * The max scale is 1, but the stage can be scaled down to fit the rect.
    */
-  fitRect = (rect: Rect): void => {
-    const { width, height } = this.getSize();
+  fitRect = (rect: Rect, options?: { animate?: boolean; targetWidth?: number; targetHeight?: number }): void => {
+    const size = this.getSize();
+    const { animate, targetWidth, targetHeight } = {
+      animate: true,
+      targetWidth: size.width,
+      targetHeight: size.height,
+      ...options,
+    };
 
     // If the stage has no size, we can't fit anything to it
-    if (width === 0 || height === 0) {
+    if (targetWidth === 0 || targetHeight === 0) {
       return;
     }
 
-    const availableWidth = width - this.config.FIT_LAYERS_TO_STAGE_PADDING_PX * 2;
-    const availableHeight = height - this.config.FIT_LAYERS_TO_STAGE_PADDING_PX * 2;
+    const availableWidth = targetWidth - this.config.FIT_LAYERS_TO_STAGE_PADDING_PX * 2;
+    const availableHeight = targetHeight - this.config.FIT_LAYERS_TO_STAGE_PADDING_PX * 2;
 
     // Make sure we don't accidentally set the scale to something nonsensical, like a negative number, 0 or something
     // outside the valid range
@@ -230,23 +242,33 @@ export class CanvasStageModule extends CanvasModuleBase {
     this._intendedScale = scale;
     this._activeSnapPoint = null;
 
-    const tween = new Konva.Tween({
-      node: this.konva.stage,
-      duration: 0.15,
-      x,
-      y,
-      scaleX: scale,
-      scaleY: scale,
-      easing: Konva.Easings.EaseInOut,
-      onUpdate: () => {
-        this.syncStageAttrs();
-      },
-      onFinish: () => {
-        this.syncStageAttrs();
-        tween.destroy();
-      },
-    });
-    tween.play();
+    if (animate) {
+      const tween = new Konva.Tween({
+        node: this.konva.stage,
+        duration: 0.15,
+        x,
+        y,
+        scaleX: scale,
+        scaleY: scale,
+        easing: Konva.Easings.EaseInOut,
+        onUpdate: () => {
+          this.syncStageAttrs();
+        },
+        onFinish: () => {
+          this.syncStageAttrs();
+          tween.destroy();
+        },
+      });
+      tween.play();
+    } else {
+      this.konva.stage.setAttrs({
+        x,
+        y,
+        scaleX: scale,
+        scaleY: scale,
+      });
+      this.syncStageAttrs();
+    }
   };
 
   /**
@@ -322,7 +344,9 @@ export class CanvasStageModule extends CanvasModuleBase {
 
   onStageMouseWheel = (e: KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
-    this._snapTimeout && window.clearTimeout(this._snapTimeout);
+    if (this._snapTimeout !== null) {
+      window.clearTimeout(this._snapTimeout);
+    }
 
     if (e.evt.ctrlKey || e.evt.metaKey) {
       return;
@@ -336,10 +360,33 @@ export class CanvasStageModule extends CanvasModuleBase {
     }
 
     // When wheeling on trackpad, e.evt.ctrlKey is true - in that case, let's reverse the direction
-    const delta = e.evt.ctrlKey ? -e.evt.deltaY : e.evt.deltaY;
+    const scrollAmount = e.evt.ctrlKey ? -e.evt.deltaY : e.evt.deltaY;
+
+    const now = window.performance.now();
+    const deltaT = this._lastScrollEventTimestamp === null ? Infinity : now - this._lastScrollEventTimestamp;
+    this._lastScrollEventTimestamp = now;
+
+    let dynamicScaleFactor = this.config.SCALE_FACTOR;
+
+    if (deltaT > 300) {
+      dynamicScaleFactor = this.config.SCALE_FACTOR + (1 - this.config.SCALE_FACTOR) / 2;
+    } else if (deltaT < 300) {
+      // Ensure dynamic scale factor stays below 1 to maintain zoom-out direction - if it goes over, we could end up
+      // zooming in the wrong direction with small scroll amounts
+      const maxScaleFactor = 0.9999;
+      dynamicScaleFactor = Math.min(
+        this.config.SCALE_FACTOR + (1 - this.config.SCALE_FACTOR) * (deltaT / 200),
+        maxScaleFactor
+      );
+    }
 
     // Update the intended scale based on the last intended scale, creating a continuous zoom feel
-    const newIntendedScale = this._intendedScale * this.config.SCALE_FACTOR ** delta;
+    // Handle the sign explicitly to prevent direction reversal with small scroll amounts
+    const scaleFactor =
+      scrollAmount > 0
+        ? dynamicScaleFactor ** Math.abs(scrollAmount)
+        : (1 / dynamicScaleFactor) ** Math.abs(scrollAmount);
+    const newIntendedScale = this._intendedScale * scaleFactor;
     this._intendedScale = this.constrainScale(newIntendedScale);
 
     // Pass control to the snapping logic
@@ -349,7 +396,7 @@ export class CanvasStageModule extends CanvasModuleBase {
       // After a short delay, we can reset the intended scale to the current scale
       // This allows for continuous zooming without snapping back to the last snapped scale
       this._intendedScale = this.getScale();
-    }, 100);
+    }, 300);
   };
 
   /**
@@ -366,6 +413,9 @@ export class CanvasStageModule extends CanvasModuleBase {
         // User has scrolled far enough to break the snap
         this._activeSnapPoint = null;
         this._applyScale(this._intendedScale, center);
+      } else {
+        // Reset intended scale to prevent drift while snapped
+        this._intendedScale = this._activeSnapPoint;
       }
       // Else, do nothing - we remain snapped at the current scale, creating a "dead zone"
       return;
@@ -390,6 +440,13 @@ export class CanvasStageModule extends CanvasModuleBase {
     // If the middle mouse button is clicked and we are not already dragging, start dragging the stage
     if (e.evt.button === 1) {
       this.startDragging();
+    }
+  };
+
+  onStagePointerUp = (e: KonvaEventObject<PointerEvent>) => {
+    // If the middle mouse button is released and we are dragging, stop dragging the stage
+    if (e.evt.button === 1) {
+      this.stopDragging();
     }
   };
 
